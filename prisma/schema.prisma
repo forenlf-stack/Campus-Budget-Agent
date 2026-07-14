@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  REFUND
+}
+
+enum TransactionCategory {
+  MEAL
+  SNACK_DRINK
+  DAILY_NECESSITY
+  STUDY
+  TRANSPORT
+  GAME_ENTERTAINMENT
+  RECHARGE_SUBSCRIPTION
+  MEDICAL
+  OTHER
+}
+
+enum TransactionSource {
+  MANUAL
+  CSV
+  AGENT
+}
+
+model UserProfile {
+  id                         String           @id
+  displayName                String
+  openingBalanceCents        Int
+  balanceAsOf                DateTime
+  expectedMonthlyIncomeCents Int
+  fixedMonthlyExpenseCents   Int
+  emergencyReserveCents      Int
+  savingsTargetCents         Int
+  savingsTargetDate          DateTime?
+  allowanceDay               Int              @default(1)
+  defaultLocation            String           @default("")
+  createdAt                  DateTime         @default(now())
+  updatedAt                  DateTime         @updatedAt
+  categoryBudgets            CategoryBudget[]
+  preference                 UserPreference?
+  transactions               Transaction[]    @relation("UserTransactions")
+}
+
+model CategoryBudget {
+  id          String              @id
+  userId      String
+  category    TransactionCategory
+  periodStart DateTime
+  amountCents Int
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  user        UserProfile         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category, periodStart])
+  @@index([userId, periodStart])
+}
+
+model UserPreference {
+  id                             String      @id
+  userId                         String      @unique
+  maxSingleMealCents             Int
+  maxSingleSnackDrinkCents       Int
+  monthlyEntertainmentLimitCents Int
+  recommendedLunchPriceCents     Int         @default(0)
+  weeklySnackDrinkLimit          Int         @default(0)
+  weeklySnackDrinkBudgetCents    Int         @default(0)
+  shoppingReminderThresholdCents Int         @default(0)
+  coolingOffHours                Int         @default(0)
+  priceSensitivity               String
+  prioritizeNeeds                Boolean
+  foodLikes                      String
+  foodDislikes                   String
+  foodAllergens                  String
+  preferredDailyNecessities      String
+  avoidedBrands                  String
+  protectedCategories            String      @default("[]")
+  notes                          String?
+  createdAt                      DateTime    @default(now())
+  updatedAt                      DateTime    @updatedAt
+  user                           UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Transaction {
+  id                    String               @id
+  userId                String
+  type                  TransactionType
+  category              TransactionCategory?
+  source                TransactionSource    @default(MANUAL)
+  amountCents           Int
+  occurredAt            DateTime
+  itemName              String
+  merchant              String?
+  note                  String?
+  isFixedExpense        Boolean              @default(false)
+  originalTransactionId String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  user                  UserProfile          @relation("UserTransactions", fields: [userId], references: [id], onDelete: Cascade)
+  originalTransaction   Transaction?         @relation("TransactionRefunds", fields: [originalTransactionId], references: [id], onDelete: Restrict)
+  refunds               Transaction[]        @relation("TransactionRefunds")
+
+  @@index([userId, occurredAt])
+  @@index([userId, category, occurredAt])
+  @@index([originalTransactionId])
+}

@@ -40,6 +40,7 @@ yarn-error.log*
 /dev.db-journal
 /dev.db-shm
 /dev.db-wal
+/dev.db*.backup
 /prisma/*.db
 /prisma/*.db-journal
 /prisma/*.db-shm
@@ -52,3 +53,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local model credentials
+/.local-model-config.json
+/.model-config-test.json

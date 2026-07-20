@@ -24,6 +24,12 @@ describe("消费记录校验", () => {
     expect(transactionInputSchema.safeParse({ ...validExpense, amountCents: -1_000 }).success).toBe(false);
   });
 
+  it("零金额返回明确的必填提示", () => {
+    const result = transactionInputSchema.safeParse({ ...validExpense, amountCents: 0 });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.message).toBe("请输入大于0的金额");
+  });
+
   it("拒绝小数分金额", () => {
     expect(transactionInputSchema.safeParse({ ...validExpense, amountCents: 1.5 }).success).toBe(false);
   });

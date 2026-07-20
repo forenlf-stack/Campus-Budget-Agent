@@ -1,0 +1,8 @@
+import { redirect } from "next/navigation";
+import { AuthForm } from "@/app/auth-form";
+import { getCurrentUser } from "@/server/auth";
+
+export default async function RegisterPage() {
+  if (await getCurrentUser()) redirect("/");
+  return <main className="app-page grid min-h-screen place-items-center px-4 py-8 sm:px-6"><div className="grid w-full max-w-6xl overflow-hidden rounded-[2rem] border border-white/90 bg-white/80 shadow-[0_30px_90px_rgba(30,41,59,0.14)] backdrop-blur lg:grid-cols-[0.95fr_1.05fr]"><section className="w-full p-7 sm:p-10 lg:p-12"><p className="page-kicker">新的开始</p><h1 className="page-heading mt-5 text-4xl">创建个人账户</h1><p className="mt-3 text-sm leading-6 text-slate-600">每个账户拥有独立预算、交易、候选餐食和决策记录。</p><AuthForm mode="register" /></section><section className="soft-grid relative hidden overflow-hidden bg-gradient-to-br from-teal-950 via-slate-950 to-indigo-950 p-12 text-white lg:flex lg:flex-col lg:justify-between"><div aria-hidden="true" className="absolute -left-24 -top-24 size-72 rounded-full border-[50px] border-white/5" /><div className="relative"><span className="inline-flex rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold ring-1 ring-white/15">安全隔离 · 多用户支持</span><h2 className="mt-10 text-5xl font-black leading-tight tracking-[-0.04em]">你的消费数据，<br />只属于你。</h2><p className="mt-6 max-w-md leading-8 text-teal-100">从第一笔记录开始建立自己的预算节奏，让 Agent 在真实数据上提供参考。</p></div><ul className="relative grid gap-3 text-sm text-teal-50"><li className="rounded-2xl bg-white/10 p-4 ring-1 ring-white/10">✓ 独立的交易、预算和餐食候选</li><li className="rounded-2xl bg-white/10 p-4 ring-1 ring-white/10">✓ 清晰的分析和可确认的决策闭环</li></ul></section></div></main>;
+}

@@ -1,11 +1,6 @@
 import { z } from "zod";
 
-import {
-  calculateBudgetStatus,
-  calculateFlexibleBudget,
-  transactionCategories,
-  type TransactionCategory,
-} from "./budget";
+import { transactionCategories, type TransactionCategory } from "./budget";
 
 const cents = z.number().int().safe().nonnegative();
 const category = z.enum(transactionCategories);
@@ -17,9 +12,9 @@ export const settingsSchema = z.object({
   fixedExpenseCents: cents,
   monthlySavingsTargetCents: cents,
   requiredReserveCents: cents,
+  totalBudgetCents: cents,
   allowanceDay: z.number().int().min(1).max(31),
   defaultLocation: z.string().trim().max(100),
-  categoryBudgets: z.array(z.object({ category, budgetCents: cents })).length(transactionCategories.length),
   recommendedLunchPriceCents: cents,
   lunchHardLimitCents: cents,
   weeklySnackDrinkLimit: z.number().int().min(0).max(100),
@@ -34,45 +29,20 @@ export const settingsSchema = z.object({
   if (input.recommendedLunchPriceCents > input.lunchHardLimitCents) {
     context.addIssue({ code: "custom", path: ["recommendedLunchPriceCents"], message: "午餐建议价格不能超过午餐硬上限" });
   }
-  if (new Set(input.categoryBudgets.map((item) => item.category)).size !== transactionCategories.length) {
-    context.addIssue({ code: "custom", path: ["categoryBudgets"], message: "分类预算必须包含九个不同类别" });
-    return;
-  }
-  const flexibleBudgetCents = calculateFlexibleBudget({
-    periodIncomeCents: input.monthlyAllowanceCents,
-    plannedFixedExpensesCents: input.fixedExpenseCents,
-    plannedSavingsCents: input.monthlySavingsTargetCents,
-    requiredReserveCents: input.requiredReserveCents,
-  });
-  const status = calculateBudgetStatus({
-    flexibleBudgetCents,
-    plannedVariableBudgetCents: Math.max(flexibleBudgetCents, 0),
-    actualNetVariableSpendingCents: 0,
-    categoryBudgets: input.categoryBudgets,
-  });
-  if (status === "INVALID_PLAN") {
-    const allocated = input.categoryBudgets.reduce((total, item) => total + item.budgetCents, 0);
-    const message = flexibleBudgetCents < 0
-      ? "月生活费不足以覆盖固定支出、储蓄目标和必要预留资金"
-      : `分类预算总和不能超过可变消费预算，还需减少 ${(allocated - flexibleBudgetCents) / 100} 元`;
-    context.addIssue({ code: "custom", path: ["categoryBudgets"], message });
+  const availableCents = input.monthlyAllowanceCents - input.fixedExpenseCents - input.monthlySavingsTargetCents - input.requiredReserveCents;
+  if (input.totalBudgetCents > Math.max(availableCents, 0)) {
+    context.addIssue({ code: "custom", path: ["totalBudgetCents"], message: "总预算不能超过扣除固定支出、储蓄目标和预留资金后的可用金额" });
   }
 });
 
 export type SettingsInput = z.infer<typeof settingsSchema>;
 
 export function calculateSettingsSummary(input: SettingsInput) {
-  const flexibleBudgetCents = calculateFlexibleBudget({
-    periodIncomeCents: input.monthlyAllowanceCents,
-    plannedFixedExpensesCents: input.fixedExpenseCents,
-    plannedSavingsCents: input.monthlySavingsTargetCents,
-    requiredReserveCents: input.requiredReserveCents,
-  });
-  const allocatedBudgetCents = input.categoryBudgets.reduce((total, item) => total + item.budgetCents, 0);
+  const availableAfterPlansCents = input.monthlyAllowanceCents - input.fixedExpenseCents - input.monthlySavingsTargetCents - input.requiredReserveCents;
   return {
-    flexibleBudgetCents,
-    allocatedBudgetCents,
-    unallocatedBudgetCents: flexibleBudgetCents - allocatedBudgetCents,
+    totalBudgetCents: input.totalBudgetCents,
+    availableAfterPlansCents,
+    unbudgetedCents: availableAfterPlansCents - input.totalBudgetCents,
   };
 }
 

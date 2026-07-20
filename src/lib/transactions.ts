@@ -4,7 +4,7 @@ import { transactionCategories, transactionTypes } from "./budget";
 
 export const transactionInputSchema = z.object({
   type: z.enum(transactionTypes),
-  amountCents: z.number().int().safe().positive(),
+  amountCents: z.number().int().safe().positive("请输入大于0的金额"),
   category: z.enum(transactionCategories).nullable(),
   itemName: z.string().trim().min(1, "请输入商品或项目名称").max(100),
   merchant: z.string().trim().max(100),

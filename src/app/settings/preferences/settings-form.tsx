@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { transactionCategories, type TransactionCategory } from "@/lib/budget";
+import { HomeLink } from "@/app/components/home-link";
+import { transactionCategories } from "@/lib/budget";
 import { centsToYuan, yuanToCents } from "@/lib/money";
 import { calculateSettingsSummary, categoryLabels, settingsSchema, type SettingsInput } from "@/lib/settings";
 
@@ -12,14 +13,14 @@ type AmountKey =
   | "fixedExpenseCents"
   | "monthlySavingsTargetCents"
   | "requiredReserveCents"
+  | "totalBudgetCents"
   | "recommendedLunchPriceCents"
   | "lunchHardLimitCents"
   | "weeklySnackDrinkBudgetCents"
   | "shoppingReminderThresholdCents";
 
-type FormState = Omit<SettingsInput, AmountKey | "categoryBudgets" | "foodLikes" | "foodDislikes" | "foodAllergens"> & {
+type FormState = Omit<SettingsInput, AmountKey | "foodLikes" | "foodDislikes" | "foodAllergens"> & {
   amounts: Record<AmountKey, string>;
-  categoryBudgets: Record<TransactionCategory, string>;
   foodLikes: string;
   foodDislikes: string;
   foodAllergens: string;
@@ -44,6 +45,7 @@ function toFormState(data: SettingsInput): FormState {
     "fixedExpenseCents",
     "monthlySavingsTargetCents",
     "requiredReserveCents",
+    "totalBudgetCents",
     "recommendedLunchPriceCents",
     "lunchHardLimitCents",
     "weeklySnackDrinkBudgetCents",
@@ -57,10 +59,6 @@ function toFormState(data: SettingsInput): FormState {
     coolingOffHours: data.coolingOffHours,
     protectedCategories: data.protectedCategories,
     amounts: Object.fromEntries(amountKeys.map((key) => [key, centsToYuan(data[key])])) as Record<AmountKey, string>,
-    categoryBudgets: Object.fromEntries(transactionCategories.map((category) => [
-      category,
-      centsToYuan(data.categoryBudgets.find((item) => item.category === category)?.budgetCents ?? 0),
-    ])) as Record<TransactionCategory, string>,
     foodLikes: data.foodLikes.join("，"),
     foodDislikes: data.foodDislikes.join("，"),
     foodAllergens: data.foodAllergens.join("，"),
@@ -75,9 +73,9 @@ function toSettingsInput(form: FormState): SettingsInput {
     fixedExpenseCents: yuanToCents(form.amounts.fixedExpenseCents),
     monthlySavingsTargetCents: yuanToCents(form.amounts.monthlySavingsTargetCents),
     requiredReserveCents: yuanToCents(form.amounts.requiredReserveCents),
+    totalBudgetCents: yuanToCents(form.amounts.totalBudgetCents),
     allowanceDay: form.allowanceDay,
     defaultLocation: form.defaultLocation,
-    categoryBudgets: transactionCategories.map((category) => ({ category, budgetCents: yuanToCents(form.categoryBudgets[category]) })),
     recommendedLunchPriceCents: yuanToCents(form.amounts.recommendedLunchPriceCents),
     lunchHardLimitCents: yuanToCents(form.amounts.lunchHardLimitCents),
     weeklySnackDrinkLimit: form.weeklySnackDrinkLimit,
@@ -105,10 +103,10 @@ function MoneyField({ label, value, onChange }: { label: string; value: string; 
 
 function Section({ number, title, children }: { number: string; title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+    <section className="surface-card rounded-3xl p-5 sm:p-7">
       <div className="mb-6 flex items-center gap-3">
-        <span className="grid size-8 place-items-center rounded-full bg-teal-700 text-sm font-semibold text-white">{number}</span>
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <span className="grid size-9 place-items-center rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-500 text-sm font-bold text-white shadow-sm">{number}</span>
+        <h2 className="text-lg font-bold text-slate-900">{title}</h2>
       </div>
       {children}
     </section>
@@ -189,22 +187,23 @@ export function SettingsForm() {
   }
 
   if (loadingError) {
-    return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="max-w-md rounded-2xl border border-red-200 bg-white p-8 text-center"><h1 className="text-xl font-semibold">配置加载失败</h1><p className="mt-3 text-sm text-red-700">{loadingError}</p><button onClick={() => void load()} className="mt-6 rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white">重新加载</button></div></main>;
+    return <main className="app-page p-6"><HomeLink /><div className="surface-card mx-auto mt-16 max-w-md rounded-3xl p-8 text-center"><h1 className="text-xl font-bold">配置加载失败</h1><p className="mt-3 text-sm text-red-700">{loadingError}</p><button onClick={() => void load()} className="mt-6 rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white">重新加载</button></div></main>;
   }
   if (!form) {
-    return <main className="grid min-h-screen place-items-center bg-slate-50"><p className="animate-pulse text-sm text-slate-500">正在加载资金与偏好配置…</p></main>;
+    return <main className="app-page p-6"><HomeLink /><p className="mt-24 text-center text-sm text-slate-500">正在加载资金与偏好配置…</p></main>;
   }
 
   const updateAmount = (key: AmountKey, value: string) => setForm({ ...form, amounts: { ...form.amounts, [key]: value } });
   const summary = evaluation?.summary;
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-10 text-slate-900 sm:px-6">
-      <form onSubmit={submit} className="mx-auto grid max-w-5xl gap-6">
-        <header className="mb-2">
-          <p className="text-sm font-semibold tracking-wide text-teal-700">第一阶段配置</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">资金与偏好设置</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">金额以元输入，保存时会准确转换为整数分。分类预算适用于当前自然月。</p>
+    <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10">
+      <form onSubmit={submit} className="relative mx-auto grid max-w-5xl gap-6 pb-28 sm:pb-20">
+        <div><HomeLink /></div>
+        <header className="mb-2 max-w-3xl py-2">
+          <p className="page-kicker">个人配置</p>
+          <h1 className="page-heading mt-4 text-4xl">资金与偏好设置</h1>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">只需设置本月总消费预算；每笔支出仍选择分类，用于后续统计消费结构。</p>
         </header>
 
         <Section number="1" title="资金背景">
@@ -215,15 +214,16 @@ export function SettingsForm() {
           </div>
         </Section>
 
-        <Section number="2" title="分类预算">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {transactionCategories.map((category) => <MoneyField key={category} label={categoryLabels[category]} value={form.categoryBudgets[category]} onChange={(value) => setForm({ ...form, categoryBudgets: { ...form.categoryBudgets, [category]: value } })} />)}
+        <Section number="2" title="总消费预算">
+          <div className="max-w-md">
+            <MoneyField label="本月总消费预算" value={form.amounts.totalBudgetCents} onChange={(value) => updateAmount("totalBudgetCents", value)} />
           </div>
+          <p className="mt-3 text-sm text-slate-500">无需提前为各分类分配额度。分类在记账时选择，首页将按实际支出展示占比。</p>
           <div className="mt-6 grid gap-3 rounded-2xl bg-slate-900 p-5 text-white sm:grid-cols-3">
             {[
-              ["可变消费总预算", summary?.flexibleBudgetCents],
-              ["已分配预算", summary?.allocatedBudgetCents],
-              ["未分配预算", summary?.unallocatedBudgetCents],
+              ["本月总消费预算", summary?.totalBudgetCents],
+              ["扣除计划后可用", summary?.availableAfterPlansCents],
+              ["未纳入预算金额", summary?.unbudgetedCents],
             ].map(([label, value]) => <div key={String(label)}><p className="text-xs text-slate-400">{label}</p><p className="mt-1 text-xl font-semibold">{typeof value === "number" ? `¥${(value / 100).toFixed(2)}` : "—"}</p></div>)}
           </div>
         </Section>
@@ -246,9 +246,9 @@ export function SettingsForm() {
           <fieldset className="mt-6"><legend className="text-sm font-medium text-slate-700">不允许优先削减的类别</legend><div className="mt-3 flex flex-wrap gap-2">{transactionCategories.map((category) => { const selected = form.protectedCategories.includes(category); return <label key={category} className={`cursor-pointer rounded-full border px-4 py-2 text-sm ${selected ? "border-teal-700 bg-teal-50 text-teal-800" : "border-slate-200 bg-white text-slate-600"}`}><input className="sr-only" type="checkbox" checked={selected} onChange={() => setForm({ ...form, protectedCategories: selected ? form.protectedCategories.filter((item) => item !== category) : [...form.protectedCategories, category] })} />{categoryLabels[category]}</label>; })}</div></fieldset>
         </Section>
 
-        <div className="sticky bottom-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <div className="safe-sticky-action sticky z-20 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-white/95 p-3 shadow-[0_18px_45px_rgba(30,41,59,0.18)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:p-4">
           <div aria-live="polite" className={`text-sm ${evaluation?.valid ? "text-slate-600" : "font-medium text-red-700"}`}>{message?.text ?? (evaluation?.valid ? "配置可保存" : evaluation?.reason)}</div>
-          <button disabled={!evaluation?.valid || saving} className="rounded-xl bg-teal-700 px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-300">{saving ? "保存中…" : "保存配置"}</button>
+          <button disabled={!evaluation?.valid || saving} className="rounded-xl bg-gradient-to-r from-teal-700 to-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-teal-700/10 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-slate-300">{saving ? "保存中…" : "保存配置"}</button>
         </div>
         {message && <div role="status" className={`rounded-xl border p-4 text-sm ${message.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{message.text}</div>}
       </form>

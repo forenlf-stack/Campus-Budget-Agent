@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { transactionCategories } from "./budget";
 import { centsToYuan, yuanToCents } from "./money";
 import { calculateSettingsSummary, settingsSchema, type SettingsInput } from "./settings";
 
@@ -14,7 +13,7 @@ function validSettings(): SettingsInput {
     requiredReserveCents: 10_000,
     allowanceDay: 1,
     defaultLocation: "学校东区",
-    categoryBudgets: transactionCategories.map((category) => ({ category, budgetCents: category === "MEAL" ? 55_000 : category === "SNACK_DRINK" ? 10_000 : 5_625 })),
+    totalBudgetCents: 110_000,
     recommendedLunchPriceCents: 1_500,
     lunchHardLimitCents: 2_500,
     weeklySnackDrinkLimit: 3,
@@ -43,7 +42,7 @@ describe("资金与偏好设置", () => {
   it("验收案例的可变消费预算为 1100 元", () => {
     const summary = calculateSettingsSummary(validSettings());
 
-    expect(summary.flexibleBudgetCents).toBe(110_000);
+    expect(summary.totalBudgetCents).toBe(110_000);
   });
 
   it("午餐建议价格不能超过硬上限", () => {
@@ -53,9 +52,9 @@ describe("资金与偏好设置", () => {
     expect(settingsSchema.safeParse(input).success).toBe(false);
   });
 
-  it("分类预算总和不能超过可变消费预算", () => {
+  it("总预算不能超过扣除计划后的可用金额", () => {
     const input = validSettings();
-    input.categoryBudgets[0].budgetCents = 100_000;
+    input.totalBudgetCents = 120_000;
 
     expect(settingsSchema.safeParse(input).success).toBe(false);
   });

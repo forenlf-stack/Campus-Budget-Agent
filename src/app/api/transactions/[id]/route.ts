@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { transactionInputSchema } from "@/lib/transactions";
 import { deleteTransaction, updateTransaction } from "@/server/transaction-store";
+import { requireApiUser } from "@/server/auth";
 
 export const runtime = "nodejs";
 
@@ -13,16 +14,18 @@ function failure(error: unknown) {
 
 export async function PATCH(request: NextRequest, context: RouteContext<"/api/transactions/[id]">) {
   try {
+    const user = await requireApiUser();
     const { id } = await context.params;
-    updateTransaction(id, transactionInputSchema.parse(await request.json()));
+    updateTransaction(user.id, id, transactionInputSchema.parse(await request.json()));
     return NextResponse.json({ data: { id } });
   } catch (error) { return failure(error); }
 }
 
 export async function DELETE(_request: NextRequest, context: RouteContext<"/api/transactions/[id]">) {
   try {
+    const user = await requireApiUser();
     const { id } = await context.params;
-    deleteTransaction(id);
+    deleteTransaction(user.id, id);
     return NextResponse.json({ data: { id } });
   } catch (error) { return failure(error); }
 }

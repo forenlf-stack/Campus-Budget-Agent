@@ -1,10 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
-import { transactionCategories } from "@/lib/budget";
 import { settingsSchema, type SettingsInput } from "@/lib/settings";
-
-const userId = "user_demo_001";
 
 function openDatabase() {
   const database = new DatabaseSync(path.join(process.cwd(), "dev.db"));
@@ -24,10 +21,6 @@ function parseList(value: unknown): string[] {
   }
 }
 
-function periodToDate(period: string): string {
-  return `${period}-01T00:00:00.000Z`;
-}
-
 export function getCurrentPeriod(): string {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
@@ -40,12 +33,12 @@ export function getCurrentPeriod(): string {
   return `${year}-${month}`;
 }
 
-export function readSettings(period = getCurrentPeriod()): SettingsInput {
+export function readSettings(userId: string, period = getCurrentPeriod()): SettingsInput {
   const database = openDatabase();
   try {
     const profile = database.prepare(`
       SELECT "openingBalanceCents", "expectedMonthlyIncomeCents", "fixedMonthlyExpenseCents",
-             "emergencyReserveCents", "savingsTargetCents", "allowanceDay", "defaultLocation"
+             "emergencyReserveCents", "savingsTargetCents", "monthlySpendingBudgetCents", "allowanceDay", "defaultLocation"
       FROM "UserProfile" WHERE "id" = ?
     `).get(userId) as Record<string, unknown> | undefined;
     const preference = database.prepare(`
@@ -57,11 +50,6 @@ export function readSettings(period = getCurrentPeriod()): SettingsInput {
     if (!profile || !preference) {
       throw new Error("未找到单用户配置，请先执行数据库种子命令");
     }
-    const rows = database.prepare(`
-      SELECT "category", "amountCents" FROM "CategoryBudget"
-      WHERE "userId" = ? AND "periodStart" = ?
-    `).all(userId, periodToDate(period)) as Array<{ category: string; amountCents: number }>;
-    const budgetMap = new Map(rows.map((row) => [row.category, row.amountCents]));
     return settingsSchema.parse({
       period,
       monthlyAllowanceCents: profile.expectedMonthlyIncomeCents,
@@ -69,9 +57,9 @@ export function readSettings(period = getCurrentPeriod()): SettingsInput {
       fixedExpenseCents: profile.fixedMonthlyExpenseCents,
       monthlySavingsTargetCents: profile.savingsTargetCents,
       requiredReserveCents: profile.emergencyReserveCents,
+      totalBudgetCents: profile.monthlySpendingBudgetCents,
       allowanceDay: profile.allowanceDay,
       defaultLocation: profile.defaultLocation,
-      categoryBudgets: transactionCategories.map((category) => ({ category, budgetCents: budgetMap.get(category) ?? 0 })),
       recommendedLunchPriceCents: preference.recommendedLunchPriceCents,
       lunchHardLimitCents: preference.maxSingleMealCents,
       weeklySnackDrinkLimit: preference.weeklySnackDrinkLimit,
@@ -88,7 +76,7 @@ export function readSettings(period = getCurrentPeriod()): SettingsInput {
   }
 }
 
-export function saveSettings(input: SettingsInput): SettingsInput {
+export function saveSettings(userId: string, input: SettingsInput): SettingsInput {
   const data = settingsSchema.parse(input);
   const database = openDatabase();
   database.exec("BEGIN IMMEDIATE");
@@ -98,7 +86,7 @@ export function saveSettings(input: SettingsInput): SettingsInput {
       UPDATE "UserProfile" SET
         "openingBalanceCents" = ?, "expectedMonthlyIncomeCents" = ?,
         "fixedMonthlyExpenseCents" = ?, "emergencyReserveCents" = ?,
-        "savingsTargetCents" = ?, "allowanceDay" = ?, "defaultLocation" = ?, "updatedAt" = ?
+        "savingsTargetCents" = ?, "monthlySpendingBudgetCents" = ?, "allowanceDay" = ?, "defaultLocation" = ?, "updatedAt" = ?
       WHERE "id" = ?
     `).run(
       data.currentBalanceCents,
@@ -106,6 +94,7 @@ export function saveSettings(input: SettingsInput): SettingsInput {
       data.fixedExpenseCents,
       data.requiredReserveCents,
       data.monthlySavingsTargetCents,
+      data.totalBudgetCents,
       data.allowanceDay,
       data.defaultLocation,
       now,
@@ -136,15 +125,6 @@ export function saveSettings(input: SettingsInput): SettingsInput {
       now,
       userId,
     );
-    const statement = database.prepare(`
-      INSERT INTO "CategoryBudget" ("id", "userId", "category", "periodStart", "amountCents", "createdAt", "updatedAt")
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT ("userId", "category", "periodStart") DO UPDATE SET
-        "amountCents" = excluded."amountCents", "updatedAt" = excluded."updatedAt"
-    `);
-    for (const budget of data.categoryBudgets) {
-      statement.run(`budget_${data.period.replace("-", "_")}_${budget.category.toLowerCase()}`, userId, budget.category, periodToDate(data.period), budget.budgetCents, now, now);
-    }
     database.exec("COMMIT");
     return data;
   } catch (error) {

@@ -31,12 +31,40 @@ enum TransactionSource {
   AGENT
 }
 
+enum MealPeriod {
+  BREAKFAST
+  LUNCH
+  DINNER
+  ALL_DAY
+}
+
+enum MealCandidateDataSource {
+  MANUAL
+  SEED
+}
+
+enum DecisionSource {
+  HISTORY
+  MENU
+  SNACK
+}
+
+enum DecisionOutcome {
+  PURCHASED
+  ABANDONED
+  REPLACED
+  DELAYED
+}
+
 model UserProfile {
   id                         String           @id
   displayName                String
+  email                      String           @unique
+  passwordHash               String
   openingBalanceCents        Int
   balanceAsOf                DateTime
   expectedMonthlyIncomeCents Int
+  monthlySpendingBudgetCents Int              @default(0)
   fixedMonthlyExpenseCents   Int
   emergencyReserveCents      Int
   savingsTargetCents         Int
@@ -48,6 +76,22 @@ model UserProfile {
   categoryBudgets            CategoryBudget[]
   preference                 UserPreference?
   transactions               Transaction[]    @relation("UserTransactions")
+  mealCandidates             MealCandidate[]
+  decisions                  DecisionRecord[]
+  sessions                   UserSession[]
+}
+
+model UserSession {
+  id        String      @id
+  userId    String
+  tokenHash String      @unique
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model CategoryBudget {
@@ -107,8 +151,62 @@ model Transaction {
   user                  UserProfile          @relation("UserTransactions", fields: [userId], references: [id], onDelete: Cascade)
   originalTransaction   Transaction?         @relation("TransactionRefunds", fields: [originalTransactionId], references: [id], onDelete: Restrict)
   refunds               Transaction[]        @relation("TransactionRefunds")
+  decision              DecisionRecord?
 
   @@index([userId, occurredAt])
   @@index([userId, category, occurredAt])
   @@index([originalTransactionId])
+}
+
+model MealCandidate {
+  id                String                  @id
+  userId            String
+  name              String
+  merchant          String
+  typicalPriceCents Int
+  location          String
+  mealPeriod        MealPeriod
+  tags              String
+  ingredients       String
+  isSpicy           Boolean                 @default(false)
+  userRating        Int?
+  lastPurchasedAt   DateTime?
+  priceUpdatedAt    DateTime
+  dataSource        MealCandidateDataSource @default(MANUAL)
+  enabled           Boolean                 @default(true)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  user              UserProfile             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, location, mealPeriod, enabled])
+  @@index([userId, enabled, updatedAt])
+}
+
+model DecisionRecord {
+  id                        String          @id
+  userId                    String
+  idempotencyKey            String
+  recommendationRunId       String
+  candidateId               String
+  itemName                  String
+  source                    DecisionSource
+  outcome                   DecisionOutcome
+  recommendationType        String
+  recommendationRisk        String
+  recommendedPriceCents     Int
+  actualPriceCents          Int?
+  occurredAt                DateTime?
+  transactionId             String?         @unique
+  remainingBudgetAfterCents Int?
+  mealRemainingAfterCents   Int?
+  recommendedDailyBudgetAfterCents Int?
+  savingsTargetStillOnTrack Boolean?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  user                      UserProfile     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction               Transaction?    @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([recommendationRunId])
 }

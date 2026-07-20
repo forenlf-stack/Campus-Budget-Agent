@@ -1,9 +1,15 @@
 import { DatabaseSync } from "node:sqlite";
+import { randomBytes, scryptSync } from "node:crypto";
 
 const database = new DatabaseSync("dev.db");
 const userId = "user_demo_001";
 const periodStart = "2026-07-01T00:00:00.000Z";
 const now = "2026-07-14T00:00:00.000Z";
+
+function demoPasswordHash() {
+  const salt = randomBytes(16).toString("hex");
+  return `scrypt$${salt}$${scryptSync("Demo1234", salt, 64).toString("hex")}`;
+}
 
 const budgets = [
   ["MEAL", 55000],
@@ -44,10 +50,31 @@ const transactions = [
   ["tx_024", "EXPENSE", "MEAL", "AGENT", 1180, "2026-07-14T10:10:00.000Z", "晚餐", "校园餐厅", "模拟后续 Agent 来源", null],
 ];
 
+const mealCandidates = [
+  ["meal_001", "鸡腿饭套餐", "第一食堂一楼", 1500, "东校区", "LUNCH", ["米饭套餐", "高蛋白"], ["大米", "鸡肉", "青菜"], 0, 5],
+  ["meal_002", "番茄鸡蛋面", "第一食堂面档", 1200, "东校区", "ALL_DAY", ["面食", "清淡"], ["小麦", "鸡蛋", "番茄"], 0, 4],
+  ["meal_003", "麻辣香锅", "第二食堂二楼", 2200, "东校区", "LUNCH", ["米饭套餐", "重口味"], ["蔬菜", "肉类", "花生"], 1, 4],
+  ["meal_004", "青椒肉丝盖饭", "第二食堂盖饭档", 1600, "东校区", "LUNCH", ["米饭套餐", "家常菜"], ["大米", "猪肉", "青椒"], 1, null],
+  ["meal_005", "牛肉米线", "校园餐厅米线档", 1800, "东校区", "ALL_DAY", ["米线", "汤粉"], ["大米", "牛肉", "香菜"], 1, 5],
+  ["meal_006", "素三鲜水饺", "第一食堂饺子档", 1400, "东校区", "DINNER", ["面食", "素食"], ["小麦", "鸡蛋", "韭菜"], 0, 4],
+  ["meal_007", "小米粥鸡蛋套餐", "校园餐厅早餐档", 650, "东校区", "BREAKFAST", ["早餐", "清淡"], ["小米", "鸡蛋"], 0, null],
+  ["meal_008", "豆浆油条套餐", "第一食堂早餐档", 550, "东校区", "BREAKFAST", ["早餐", "豆制品"], ["大豆", "小麦"], 0, 3],
+  ["meal_009", "照烧鸡排饭", "第三食堂一楼", 1700, "西校区", "LUNCH", ["米饭套餐", "甜咸"], ["大米", "鸡肉", "芝麻"], 0, 5],
+  ["meal_010", "酸辣粉", "第三食堂粉面档", 1300, "西校区", "ALL_DAY", ["粉面", "酸辣"], ["红薯粉", "花生", "辣椒"], 1, 4],
+  ["meal_011", "清汤牛肉面", "西区兰州面馆", 1600, "西校区", "ALL_DAY", ["面食", "清汤"], ["小麦", "牛肉", "香菜"], 0, 4],
+  ["meal_012", "石锅拌饭", "西区风味餐厅", 1900, "西校区", "DINNER", ["米饭套餐", "蔬菜丰富"], ["大米", "鸡蛋", "芝麻"], 1, null],
+  ["meal_013", "香菇滑鸡饭", "图书馆餐厅", 1550, "中心校区", "LUNCH", ["米饭套餐", "清淡"], ["大米", "鸡肉", "香菇"], 0, 5],
+  ["meal_014", "菌菇汤面", "图书馆餐厅", 1250, "中心校区", "DINNER", ["面食", "素食"], ["小麦", "菌菇", "青菜"], 0, 4],
+  ["meal_015", "咖喱鸡肉饭", "中心美食广场", 1850, "中心校区", "LUNCH", ["米饭套餐", "咖喱"], ["大米", "鸡肉", "咖喱"], 0, null],
+];
+
 database.exec("PRAGMA foreign_keys = ON");
 database.exec("BEGIN IMMEDIATE");
 
 try {
+  database.prepare("DELETE FROM \"UserSession\"").run();
+  database.prepare("DELETE FROM \"DecisionRecord\"").run();
+  database.prepare("DELETE FROM \"MealCandidate\"").run();
   database.prepare("DELETE FROM \"Transaction\" WHERE \"type\" = 'REFUND'").run();
   database.prepare("DELETE FROM \"Transaction\"").run();
   database.prepare("DELETE FROM \"CategoryBudget\"").run();
@@ -56,27 +83,31 @@ try {
 
   database.prepare(`
     INSERT INTO "UserProfile" (
-      "id", "displayName", "openingBalanceCents", "balanceAsOf",
-      "expectedMonthlyIncomeCents", "fixedMonthlyExpenseCents",
+      "id", "displayName", "email", "passwordHash", "openingBalanceCents", "balanceAsOf",
+      "expectedMonthlyIncomeCents", "monthlySpendingBudgetCents", "fixedMonthlyExpenseCents",
       "emergencyReserveCents", "savingsTargetCents", "savingsTargetDate",
       "createdAt", "updatedAt"
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(userId, "小林", 350000, periodStart, 220000, 60000, 10000, 40000, "2026-12-31T00:00:00.000Z", now, now);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(userId, "小林", "demo@budget.local", demoPasswordHash(), 350000, periodStart, 220000, 110000, 60000, 10000, 40000, "2026-12-31T00:00:00.000Z", now, now);
 
   database.prepare(`
     INSERT INTO "UserPreference" (
       "id", "userId", "maxSingleMealCents", "maxSingleSnackDrinkCents",
-      "monthlyEntertainmentLimitCents", "priceSensitivity", "prioritizeNeeds",
+      "monthlyEntertainmentLimitCents", "recommendedLunchPriceCents",
+      "weeklySnackDrinkLimit", "weeklySnackDrinkBudgetCents",
+      "shoppingReminderThresholdCents", "coolingOffHours",
+      "priceSensitivity", "prioritizeNeeds",
       "foodLikes", "foodDislikes", "foodAllergens", "preferredDailyNecessities",
-      "avoidedBrands", "notes", "createdAt", "updatedAt"
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      "avoidedBrands", "protectedCategories", "notes", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    "preference_demo_001", userId, 2500, 1200, 15000, "HIGH", 1,
+    "preference_demo_001", userId, 2500, 1200, 15000, 1500, 2, 2000, 5000, 24, "HIGH", 1,
     JSON.stringify(["米饭套餐", "面食", "水果", "无糖饮料"]),
     JSON.stringify(["过辣食品", "香菜"]),
     JSON.stringify(["花生"]),
     JSON.stringify(["耐用", "性价比高", "小包装"]),
     JSON.stringify([]),
+    JSON.stringify(["MEAL", "DAILY_NECESSITY", "STUDY", "TRANSPORT", "MEDICAL"]),
     "优先满足学习和基本生活需要，娱乐消费保持克制。", now, now,
   );
 
@@ -102,11 +133,28 @@ try {
     insertTransaction.run(transaction[0], userId, ...transaction.slice(1), now, now);
   }
 
+  const insertMealCandidate = database.prepare(`
+    INSERT INTO "MealCandidate" (
+      "id", "userId", "name", "merchant", "typicalPriceCents", "location",
+      "mealPeriod", "tags", "ingredients", "isSpicy", "userRating",
+      "lastPurchasedAt", "priceUpdatedAt", "dataSource", "enabled", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'SEED', 1, ?, ?)
+  `);
+
+  for (const candidate of mealCandidates) {
+    insertMealCandidate.run(
+      candidate[0], userId, candidate[1], candidate[2], candidate[3], candidate[4],
+      candidate[5], JSON.stringify(candidate[6]), JSON.stringify(candidate[7]),
+      candidate[8], candidate[9], now, now, now,
+    );
+  }
+
   const counts = {
     users: database.prepare("SELECT COUNT(*) AS count FROM \"UserProfile\"").get().count,
     preferences: database.prepare("SELECT COUNT(*) AS count FROM \"UserPreference\"").get().count,
     budgets: database.prepare("SELECT COUNT(*) AS count FROM \"CategoryBudget\"").get().count,
     transactions: database.prepare("SELECT COUNT(*) AS count FROM \"Transaction\"").get().count,
+    mealCandidates: database.prepare("SELECT COUNT(*) AS count FROM \"MealCandidate\"").get().count,
   };
 
   const invalidRefunds = database.prepare(`
@@ -117,7 +165,7 @@ try {
       AND (original."id" IS NULL OR original."type" != 'EXPENSE')
   `).get().count;
 
-  if (counts.users !== 1 || counts.preferences !== 1 || counts.budgets !== budgets.length || counts.transactions !== transactions.length || invalidRefunds !== 0) {
+  if (counts.users !== 1 || counts.preferences !== 1 || counts.budgets !== budgets.length || counts.transactions !== transactions.length || counts.mealCandidates !== mealCandidates.length || invalidRefunds !== 0) {
     throw new Error(`种子数据验证失败：${JSON.stringify({ ...counts, invalidRefunds })}`);
   }
 

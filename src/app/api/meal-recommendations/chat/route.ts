@@ -10,6 +10,7 @@ import { requireApiUser } from "@/server/auth";
 import { getFinancialContext } from "@/server/skills/get-financial-context";
 import { getRecentMealConsumption } from "@/server/skills/get-recent-meal-consumption";
 import { parseMealRequest } from "@/server/skills/parse-meal-request";
+import { retrieveHistoricalMealPatterns, type HistoricalMealPatternsData } from "@/server/skills/retrieve-historical-meal-patterns";
 
 export const runtime = "nodejs";
 
@@ -43,6 +44,29 @@ function candidateContext(input: z.infer<typeof mealAgentChatInputSchema>) {
     risk: item.risk,
     remainingBudgetAfterYuan: item.details.budgetImpact ? signedCentsToYuan(item.details.budgetImpact.remainingBudgetAfterCents) : null,
   }));
+}
+
+function localHistoryResponse(data: HistoricalMealPatternsData) {
+  const dateFormatter = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "numeric", day: "numeric" });
+  const reply = data.patterns.length
+    ? [
+        `按你的本地账本统计，下面这些在近${data.recentDays}天吃过、但近${data.lookbackDays}天出现不超过2次：`,
+        ...data.patterns.map((item, index) => {
+          const name = item.name.slice(0, 60);
+          const merchant = item.merchant && item.merchant !== item.name ? ` · ${item.merchant.slice(0, 50)}` : "";
+          return `${index + 1}. ${name}${merchant}（${item.occurrenceCount}次，最近 ${dateFormatter.format(item.lastOccurredAt)}，净均价¥${centsToYuan(item.averageNetAmountCents)}）`;
+        }),
+        data.insufficientHistory ? "目前可用餐饮记录还不多，这份结果仅按现有流水统计。" : "这些结果只来自你的本地流水，并已排除全额退款和固定支出。",
+      ].join("\n")
+    : `本地账本里暂时没有找到“近${data.recentDays}天吃过、且近${data.lookbackDays}天不超过2次”的有效餐饮记录。可以先检查相关流水是否已归到“餐饮”分类。`;
+  return mealAgentChatResponseSchema.parse({
+    reply,
+    referencedCandidateIds: [],
+    suggestedRequest: null,
+    suggestedQuickTags: [],
+    needsNewRecommendation: false,
+    source: "RULES",
+  });
 }
 
 function fallbackResponse(input: z.infer<typeof mealAgentChatInputSchema>, reason: string, context: ReturnType<typeof agentContext>) {
@@ -95,7 +119,14 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireApiUser();
     const input = mealAgentChatInputSchema.parse(await request.json());
-    const context = agentContext(createSkillReadStore(user.id));
+    const store = createSkillReadStore(user.id);
+    const parsedRequest = parseMealRequest(input.message);
+    if (parsedRequest.historyQuery === "RECENT_INFREQUENT") {
+      const history = retrieveHistoricalMealPatterns({ queryDate: new Date() }, store);
+      if (!history.success) throw new Error(history.error.message);
+      return NextResponse.json(localHistoryResponse(history.data));
+    }
+    const context = agentContext(store);
     const system = `你是大学生的个人餐食决策 Agent，不是筛选条件解析器。你拥有用户当前预算、近期消费和可选候选等可信背景，应像了解用户情况的顾问一样直接回答。
 用户可以询问合理餐价、提出候选库外的临时食物、描述一顿饭、让你比较候选，或要求你明确推荐一个。只要信息足够就必须给出判断，不要用“我可以继续比较”“请再告诉我”之类模板回避。
 用户问“多少钱合适”时，给出建议价位、可接受上限和近期均价。用户问某食物某价格能不能吃时，即使不在候选库，也要结合预算与近期消费评价“合适/偶尔可以/建议再想想”，但不要虚构其配料。

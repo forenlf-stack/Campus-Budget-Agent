@@ -2,6 +2,7 @@ import type { MealRecommendationQuickTag } from "@/lib/meal-recommendations";
 
 export interface ParsedMealRequest {
   quickTags: MealRecommendationQuickTag[];
+  historyQuery: "RECENT_INFREQUENT" | null;
   hardPriceLimitCents?: number;
   targetPriceCents?: number;
   preferredTerms: string[];
@@ -24,6 +25,9 @@ function capturedTerms(text: string, patterns: RegExp[]) {
 
 export function parseMealRequest(value: string): ParsedMealRequest {
   const text = value.trim();
+  const historyQuery = /(?=.*(?:最近|近期|这阵子|前段时间|之前))(?=.*吃过)(?=.*(?:不常吃|不经常吃|很少吃|吃得少|次数少|偶尔吃))/.test(text)
+    ? "RECENT_INFREQUENT" as const
+    : null;
   const quickTags: MealRecommendationQuickTag[] = [];
   if (/省|便宜|实惠|性价比/.test(text)) quickTags.push("SAVE_MONEY");
   if (/换.{0,2}(口味|一批)|不一样|新鲜/.test(text)) quickTags.push("TRY_DIFFERENT");
@@ -49,6 +53,7 @@ export function parseMealRequest(value: string): ParsedMealRequest {
 
   return {
     quickTags: [...new Set(quickTags)],
+    historyQuery,
     ...(hardPriceLimitCents ? { hardPriceLimitCents } : {}),
     ...(targetPriceCents ? { targetPriceCents } : {}),
     preferredTerms: [...new Set(preferredTerms)],

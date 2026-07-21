@@ -235,6 +235,7 @@ export async function runMenuMealRecommendation(
       const interpreted = await interpretMealRequestWithLlm(parsed.data.userRequest);
       if (interpreted) naturalRequest = {
         quickTags: interpreted.quickTags,
+        historyQuery: null,
         preferredTerms: interpreted.preferredTerms,
         avoidedTerms: interpreted.avoidedTerms,
         strictAvoidedTerms: interpreted.strictAvoidedTerms,

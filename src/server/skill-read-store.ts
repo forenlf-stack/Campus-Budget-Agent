@@ -6,9 +6,14 @@ import { readSettings } from "@/server/settings-store";
 interface TransactionRow {
   id: string; type: BudgetTransaction["type"]; category: BudgetTransaction["category"];
   amountCents: number; occurredAt: string; isFixedExpense: number; itemName: string; merchant: string | null;
+  originalTransactionId: string | null;
 }
 
-export interface MealTransaction extends BudgetTransaction { itemName: string; merchant: string | null; }
+export interface MealTransaction extends BudgetTransaction {
+  itemName: string;
+  merchant: string | null;
+  originalTransactionId?: string | null;
+}
 
 export function createSkillReadStore(userId: string) {
   function readPeriodTransactions(start: Date, end: Date): BudgetTransaction[] {
@@ -23,7 +28,7 @@ export function createSkillReadStore(userId: string) {
     if (!category) return [];
     const database = openDatabase();
     try {
-      const rows = database.prepare(`SELECT "id", "type", "category", "amountCents", "occurredAt", "isFixedExpense", "itemName", "merchant" FROM "Transaction" WHERE "userId" = ? AND "category" = ? AND "occurredAt" >= ? AND "occurredAt" <= ? AND "deletedAt" IS NULL ORDER BY "occurredAt" DESC, "createdAt" DESC`).all(userId, category, start.toISOString(), end.toISOString()) as unknown as TransactionRow[];
+      const rows = database.prepare(`SELECT "id", "type", "category", "amountCents", "occurredAt", "isFixedExpense", "itemName", "merchant", "originalTransactionId" FROM "Transaction" WHERE "userId" = ? AND "category" = ? AND "occurredAt" >= ? AND "occurredAt" <= ? AND "deletedAt" IS NULL ORDER BY "occurredAt" DESC, "createdAt" DESC`).all(userId, category, start.toISOString(), end.toISOString()) as unknown as TransactionRow[];
       return rows.map((row) => ({ ...row, occurredAt: new Date(row.occurredAt), isFixedExpense: Boolean(row.isFixedExpense) }));
     } finally { database.close(); }
   }

@@ -137,6 +137,7 @@ export function runFixedMealRecommendation(
   const naturalRequest = interpreted
     ? {
         quickTags: interpreted.quickTags,
+        historyQuery: null,
         preferredTerms: interpreted.preferredTerms,
         avoidedTerms: interpreted.avoidedTerms,
         strictAvoidedTerms: interpreted.strictAvoidedTerms,

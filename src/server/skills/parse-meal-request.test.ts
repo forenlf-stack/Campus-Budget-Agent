@@ -28,4 +28,10 @@ describe("parse_meal_request", () => {
     expect(parseMealRequest("推荐2个包子").hardPriceLimitCents).toBeUndefined();
     expect(parseMealRequest("想吃20元左右的饭").targetPriceCents).toBe(2_000);
   });
+
+  it("识别最近吃过但不常吃的本地历史查询", () => {
+    expect(parseMealRequest("算了，我最近吃过但是不常吃的有哪些").historyQuery).toBe("RECENT_INFREQUENT");
+    expect(parseMealRequest("前段时间偶尔吃过什么？").historyQuery).toBe("RECENT_INFREQUENT");
+    expect(parseMealRequest("换一批没吃过的").historyQuery).toBeNull();
+  });
 });

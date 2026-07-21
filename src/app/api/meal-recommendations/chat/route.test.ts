@@ -10,6 +10,25 @@ vi.mock("@/server/llm/deepseek-client", () => ({
   }),
 }));
 
+vi.mock("@/server/skills/retrieve-historical-meal-patterns", () => ({
+  retrieveHistoricalMealPatterns: vi.fn().mockReturnValue({
+    success: true,
+    data: {
+      recentDays: 30,
+      lookbackDays: 90,
+      consideredMealCount: 12,
+      insufficientHistory: false,
+      patterns: [{
+        name: "咖喱鸡肉饭",
+        merchant: "中心美食广场",
+        occurrenceCount: 1,
+        averageNetAmountCents: 1_850,
+        lastOccurredAt: new Date("2026-07-18T12:00:00+08:00"),
+      }],
+    },
+  }),
+}));
+
 import { POST } from "./route";
 
 const recommendation = {
@@ -32,5 +51,29 @@ describe("POST /api/meal-recommendations/chat", () => {
     const response = await POST(request as Parameters<typeof POST>[0]);
     const payload = await response.json();
     expect(response.status, JSON.stringify(payload)).toBe(200);
+  });
+
+  it("第三轮历史低频查询直接返回本地流水内容，不依赖当前候选", async () => {
+    const request = new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "算了，我最近吃过但是不常吃的有哪些",
+        history: [
+          { role: "user", content: "我想吃一些咖喱，给我一些价格建议" },
+          { role: "assistant", content: "单顿咖喱饭建议控制在15元左右。" },
+          { role: "user", content: "30元的鳗鱼牛肉饭合适吗" },
+          { role: "assistant", content: "建议再想想。" },
+        ],
+        recommendations: [],
+      }),
+    });
+    const response = await POST(request as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload).toMatchObject({ source: "RULES", needsNewRecommendation: false, referencedCandidateIds: [] });
+    expect(payload.reply).toContain("咖喱鸡肉饭");
+    expect(payload.reply).toContain("本地");
+    expect(payload.reply).not.toContain("我可以直接评价");
   });
 });

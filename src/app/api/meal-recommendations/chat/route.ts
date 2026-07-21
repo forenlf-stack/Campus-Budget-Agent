@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealAgentChatInputSchema, mealAgentChatResponseSchema } from "@/lib/meal-agent-chat";
 import { centsToYuan, signedCentsToYuan } from "@/lib/money";
 import { callDeepSeekMessagesJson, type DeepSeekMessage } from "@/server/llm/deepseek-client";
@@ -13,14 +14,14 @@ import { parseMealRequest } from "@/server/skills/parse-meal-request";
 export const runtime = "nodejs";
 
 const llmResponseSchema = z.object({
-  reply: z.string().trim().min(1).max(800).optional(),
-  message: z.string().trim().min(1).max(800).optional(),
-  response: z.string().trim().min(1).max(800).optional(),
-  answer: z.string().trim().min(1).max(800).optional(),
-  analysis: z.string().trim().min(1).max(800).optional(),
-  conclusion: z.string().trim().min(1).max(800).optional(),
-  referencedCandidateIds: z.array(z.string().trim().min(1)).max(4).default([]),
-  suggestedRequest: z.string().trim().max(300).nullable().default(null),
+  reply: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters).optional(),
+  message: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters).optional(),
+  response: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters).optional(),
+  answer: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters).optional(),
+  analysis: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters).optional(),
+  conclusion: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters).optional(),
+  referencedCandidateIds: z.array(z.string().trim().min(1)).max(agentCapabilities.mealRecommendations.maximumCount).default([]),
+  suggestedRequest: z.string().trim().max(agentCapabilities.languageUnderstanding.maximumRequestCharacters).nullable().default(null),
   suggestedQuickTags: z.array(z.enum(["SAVE_MONEY", "TRY_DIFFERENT", "LIGHT", "SPICY", "STAY_NEAR"])).max(5).default([]),
   needsNewRecommendation: z.boolean().default(false),
 }).passthrough().transform((value) => ({
@@ -47,7 +48,8 @@ function candidateContext(input: z.infer<typeof mealAgentChatInputSchema>) {
 function fallbackResponse(input: z.infer<typeof mealAgentChatInputSchema>, reason: string, context: ReturnType<typeof agentContext>) {
   const parsed = parseMealRequest(input.message);
   const mentioned = input.recommendations.filter((item) => input.message.includes(item.name) || input.message.includes(item.candidateId));
-  const needsNewRecommendation = parsed.quickTags.length > 0 || parsed.preferredTerms.length > 0 || parsed.avoidedTerms.length > 0 || parsed.hardPriceLimitCents !== undefined;
+  const needsNewRecommendation = parsed.quickTags.length > 0 || parsed.preferredTerms.length > 0 || parsed.avoidedTerms.length > 0
+    || parsed.strictAvoidedTerms.length > 0 || parsed.hardPriceLimitCents !== undefined || parsed.targetPriceCents !== undefined;
   const asksForChoice = /(?:更推荐|推荐哪|选哪|哪个好|哪一个|二选一)/.test(input.message);
   const best = [...input.recommendations].sort((left, right) => right.details.totalScore - left.details.totalScore || left.priceCents - right.priceCents)[0];
   const asksPriceStandard = /(?:一顿饭|正餐).*(?:多少钱|价位|价格).*(?:合适|合理)|(?:多少钱|什么价位).*(?:合适|合理)/.test(input.message);
@@ -74,7 +76,7 @@ function fallbackResponse(input: z.infer<typeof mealAgentChatInputSchema>, reaso
 function agentContext(store: SkillReadStore) {
   const now = new Date();
   const financial = getFinancialContext({ queryDate: now }, store);
-  const recent = getRecentMealConsumption({ queryDate: now, days: 7, recentCount: 5 }, store);
+  const recent = getRecentMealConsumption({ queryDate: now, days: 14, recentCount: agentCapabilities.mealRecommendations.recentMealCount }, store);
   if (!financial.success) throw new Error(financial.error.message);
   if (!recent.success) throw new Error(recent.error.message);
   return {
@@ -111,7 +113,7 @@ referencedCandidateIds 只填写本次回答实际提到的候选。suggestedQui
       { role: "user", content: input.message },
     ];
     try {
-      const result = await callDeepSeekMessagesJson(messages, llmResponseSchema, { timeoutMs: 20_000, thinking: "disabled" });
+      const result = await callDeepSeekMessagesJson(messages, llmResponseSchema, { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" });
       const candidateIds = new Set(input.recommendations.map((item) => item.candidateId));
       return NextResponse.json(mealAgentChatResponseSchema.parse({
         ...result,

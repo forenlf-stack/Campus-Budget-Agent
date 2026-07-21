@@ -1,13 +1,15 @@
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
+
 export const mealPlanAssessmentInputSchema = z.object({
-  description: z.string().trim().min(1).max(500),
+  description: z.string().trim().min(1).max(agentCapabilities.languageUnderstanding.maximumRequestCharacters),
 }).strict();
 
 export const mealPlanAssessmentResponseSchema = z.object({
   level: z.enum(["POSITIVE", "CAUTION", "RECONSIDER"]),
   title: z.string().trim().min(1).max(60),
-  reply: z.string().trim().min(1).max(800),
+  reply: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters),
   priceCents: z.number().int().safe().positive(),
   recommendedMealPriceCents: z.number().int().safe().positive(),
   recentAveragePriceCents: z.number().int().safe().nonnegative(),

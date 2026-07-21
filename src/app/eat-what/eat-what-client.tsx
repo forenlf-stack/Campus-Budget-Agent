@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import { HomeLink } from "@/app/components/home-link";
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { confirmMealDecisionResponseSchema } from "@/lib/meal-decisions";
 import { mealAgentChatResponseSchema, type MealAgentMessage } from "@/lib/meal-agent-chat";
 import { mealPlanAssessmentResponseSchema, type MealPlanAssessmentResponse } from "@/lib/meal-plan-assessment";
@@ -30,7 +31,7 @@ class MenuRequestError extends Error {
 const menuStatusLabels: Record<MenuMealRecommendationResponse["status"], string> = {
   READY: "已根据菜单、预算和口味生成推荐。",
   NEEDS_PRICE_CONFIRMATION: "当前候选价格不确定，请确认实际价格后重新推荐。",
-  NO_RECOMMENDATIONS: "菜单中没有符合当前预算、时段和严格忌口的候选。",
+  NO_RECOMMENDATIONS: "菜单中没有通过安全条件的候选；可确认价格或调整明确的硬条件后重试。",
   NO_MENU_CONTENT: "没有识别到菜单内容，可以重拍或手动输入菜单文字。",
   INSUFFICIENT_MENU_CONTENT: "有效菜单候选不足2项，请补充更完整的菜单内容。",
 };
@@ -56,6 +57,7 @@ function signedCentsToYuan(cents: number) {
 
 export function EatWhatClient() {
   const [quickTags, setQuickTags] = useState<MealRecommendationQuickTag[]>([]);
+  const [recommendationCount, setRecommendationCount] = useState<number>(agentCapabilities.mealRecommendations.defaultCount);
   const [userRequest, setUserRequest] = useState("");
   const [data, setData] = useState<DirectMealRecommendationResponse | null>(null);
   const [menuData, setMenuData] = useState<MenuMealRecommendationResponse | null>(null);
@@ -84,7 +86,7 @@ export function EatWhatClient() {
     try {
       const effectiveRequest = overrides?.request ?? userRequest;
       const effectiveTags = overrides?.tags ?? quickTags;
-      const response = await fetch("/api/meal-recommendations/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quickTags: effectiveTags, userRequest: effectiveRequest, excludeCandidateIds: changeBatch ? (data?.recommendations.map((item) => item.candidateId) ?? []) : [], skipAgentInterpretation: overrides?.skipAgentInterpretation ?? false }) });
+      const response = await fetch("/api/meal-recommendations/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quickTags: effectiveTags, userRequest: effectiveRequest, maxRecommendations: recommendationCount, excludeCandidateIds: changeBatch ? (data?.recommendations.map((item) => item.candidateId) ?? []) : [], skipAgentInterpretation: overrides?.skipAgentInterpretation ?? false }) });
       const payload: unknown = await response.json();
       if (!response.ok || typeof payload !== "object" || payload === null) throw new Error("推荐失败");
       const next = payload as DirectMealRecommendationResponse;
@@ -95,7 +97,7 @@ export function EatWhatClient() {
           { role: "user", content: effectiveRequest.trim() },
           ...(next.agentResponse ? [{ role: "assistant" as const, content: `${next.agentResponse.understanding} ${next.agentResponse.response}` }] : []),
         ];
-        return messages.slice(-8);
+        return messages.slice(-agentCapabilities.conversation.maximumHistoryMessages);
       });
     } catch (caught) { setError(caught instanceof Error ? caught.message : "推荐失败"); }
     finally { setLoading(false); }
@@ -109,6 +111,7 @@ export function EatWhatClient() {
     if (options.text) body.append("menuText", options.text);
     body.append("quickTags", JSON.stringify(options.tags ?? quickTags));
     body.append("userRequest", options.request ?? userRequest);
+    body.append("maxRecommendations", String(recommendationCount));
     if (options.skipAgentInterpretation) body.append("skipAgentInterpretation", "true");
     if (options.confirmedPrices) body.append("confirmedPrices", JSON.stringify(options.confirmedPrices));
     setMenuStage(options.image ? "uploading" : "recognizing");
@@ -202,12 +205,12 @@ export function EatWhatClient() {
       const response = await fetch("/api/meal-recommendations/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history: conversation.slice(-8), recommendations }),
+        body: JSON.stringify({ message, history: conversation.slice(-agentCapabilities.conversation.maximumHistoryMessages), recommendations }),
       });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error("Agent 对话失败");
       const result = mealAgentChatResponseSchema.parse(payload);
-      setConversation((current) => ([...current, { role: "user" as const, content: message }, { role: "assistant" as const, content: result.reply }] satisfies MealAgentMessage[]).slice(-8));
+      setConversation((current) => ([...current, { role: "user" as const, content: message }, { role: "assistant" as const, content: result.reply }] satisfies MealAgentMessage[]).slice(-agentCapabilities.conversation.maximumHistoryMessages));
       if (result.needsNewRecommendation && result.suggestedRequest) {
         const tags = [...new Set([...quickTags, ...result.suggestedQuickTags])];
         setQuickTags(tags);
@@ -230,7 +233,7 @@ export function EatWhatClient() {
       if (!response.ok) throw new Error(typeof payload === "object" && payload && "error" in payload && typeof payload.error === "object" && payload.error && "message" in payload.error ? String(payload.error.message) : "方案评价失败");
       const result = mealPlanAssessmentResponseSchema.parse(payload);
       setAssessment(result);
-      setConversation((current) => ([...current, { role: "user" as const, content: description }, { role: "assistant" as const, content: result.reply }] satisfies MealAgentMessage[]).slice(-8));
+      setConversation((current) => ([...current, { role: "user" as const, content: description }, { role: "assistant" as const, content: result.reply }] satisfies MealAgentMessage[]).slice(-agentCapabilities.conversation.maximumHistoryMessages));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "方案评价失败"); }
     finally { setChatBusy(false); }
   }
@@ -286,15 +289,16 @@ export function EatWhatClient() {
   return <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-5xl">
     <div className="mb-8"><HomeLink /></div><header className="text-center"><p className="page-kicker">轻量餐食决策</p><h1 className="page-heading mt-4 text-4xl sm:text-5xl">今天吃什么？</h1><p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-slate-600">不用填表，按当前时段、默认地点和预算直接推荐。</p></header>
     <section className="mt-8 flex flex-wrap justify-center gap-2">{mealRecommendationQuickTags.map((tag) => <button key={tag} type="button" aria-pressed={quickTags.includes(tag)} onClick={() => toggle(tag)} className={`rounded-full border px-4 py-2.5 text-sm font-semibold shadow-sm transition ${quickTags.includes(tag) ? "border-orange-600 bg-gradient-to-r from-orange-600 to-amber-500 text-white shadow-orange-600/15" : "border-white bg-white/85 text-slate-600 hover:-translate-y-0.5 hover:border-orange-200 hover:text-orange-700"}`}>{quickTagLabels[tag]}</button>)}</section>
+    <div className="mt-3 flex justify-center"><label className="flex items-center gap-2 text-xs text-slate-500">候选数量<select value={recommendationCount} onChange={(event) => setRecommendationCount(Number(event.target.value))} className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-sm text-slate-700">{[4, 6, 8, 10].map((count) => <option key={count} value={count}>{count} 个</option>)}</select></label></div>
     {conversation.length > 0 && <section className="mx-auto mt-4 max-w-2xl rounded-2xl border border-violet-100 bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm font-semibold text-violet-900">本次决策对话</p><button type="button" onClick={clearConversation} className="text-xs text-slate-500 underline">清空对话</button></div><div className="mt-3 grid gap-3">{conversation.map((message, index) => <div key={`${message.role}-${index}`} className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm ${message.role === "user" ? "ml-auto bg-slate-900 text-white" : "bg-violet-50 text-violet-950"}`}><p className="mb-1 text-[11px] opacity-60">{message.role === "user" ? "你" : "Agent"}</p>{message.content}</div>)}</div></section>}
-    <form onSubmit={(event) => { event.preventDefault(); void chatWithAgent(); }} className="mx-auto mt-4 flex max-w-2xl gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-100"><label className="sr-only" htmlFor="meal-agent-request">告诉推荐 Agent 你的具体需求</label><input id="meal-agent-request" value={userRequest} onChange={(event) => setUserRequest(event.target.value)} maxLength={500} placeholder={currentRecommendations().length || conversation.length ? "继续说，例如：31元的麻辣烫按最近消费看合适吗？" : "例如：想吃清淡的面，或评价一下总共31元的麻辣烫"} className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm outline-none" /><button type="submit" disabled={loading || chatBusy} className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{chatBusy ? "思考中…" : conversation.length ? "发送" : "问 Agent"}</button></form>
+    <form onSubmit={(event) => { event.preventDefault(); void chatWithAgent(); }} className="mx-auto mt-4 flex max-w-2xl gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-100"><label className="sr-only" htmlFor="meal-agent-request">告诉推荐 Agent 你的具体需求</label><input id="meal-agent-request" value={userRequest} onChange={(event) => setUserRequest(event.target.value)} maxLength={agentCapabilities.conversation.maximumMessageCharacters} placeholder={currentRecommendations().length || conversation.length ? "继续说，例如：31元的麻辣烫按最近消费看合适吗？" : "例如：想吃清淡的面，或评价一下总共31元的麻辣烫"} className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm outline-none" /><button type="submit" disabled={loading || chatBusy} className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{chatBusy ? "思考中…" : conversation.length ? "发送" : "问 Agent"}</button></form>
     {assessment && <section className={`mx-auto mt-5 max-w-2xl rounded-2xl border p-5 ${assessment.level === "POSITIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-950" : assessment.level === "CAUTION" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-red-200 bg-red-50 text-red-950"}`}><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold">本次方案评价</p><h2 className="mt-1 text-xl font-bold">{assessment.title}</h2></div><span className="text-xs opacity-60">{assessment.source === "LLM" ? "DeepSeek + 本地数据" : "本地规则"}</span></div><p className="mt-4 text-sm leading-6">{assessment.reply}</p><details className="mt-4 border-t border-current/10 pt-3 text-sm"><summary className="cursor-pointer">查看评判依据</summary><div className="mt-3 grid gap-2">{assessment.reasons.map((reason) => <p key={reason}>• {reason}</p>)}</div></details></section>}
     <div className="mt-6 flex flex-wrap justify-center gap-3"><button disabled={loading} onClick={() => void recommend(false)} className="rounded-xl bg-orange-700 px-6 py-3 font-semibold text-white disabled:bg-slate-300">{loading ? "正在推荐…" : "直接推荐"}</button>{data?.recommendations.length ? <button disabled={loading} onClick={() => void recommend(true)} className="rounded-xl border border-orange-700 bg-white px-6 py-3 font-semibold text-orange-700 disabled:opacity-50">换一批</button> : null}<button disabled={menuLoading} onClick={() => fileInputRef.current?.click()} className="rounded-xl border border-slate-800 bg-white px-6 py-3 font-semibold disabled:opacity-50">拍菜单 / 上传图片</button><input ref={fileInputRef} hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handleFile} /></div>
     {error && <div role="alert" className="mx-auto mt-6 max-w-xl rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{error}</p><div className="mt-3 flex flex-wrap gap-3">{lastMenuInput && menuRetryable && <button type="button" disabled={menuLoading} onClick={() => void requestMenu(lastMenuInput)} className="font-semibold underline">重试识别</button>}<button type="button" onClick={inputMenuText} className="font-semibold underline">手动输入菜单文字</button><button type="button" onClick={() => void recommend(false)} className="font-semibold underline">改用历史推荐</button></div></div>}
     {menuLoading && <div role="status" className="mt-6 rounded-xl bg-white p-5 text-center text-sm text-slate-500">{menuStage === "uploading" ? "正在上传菜单图片…" : menuStage === "recognizing" ? "正在识别菜单…" : "正在结合预算生成推荐…"}</div>}
     {menuData && <section className="mt-8 rounded-2xl border border-orange-100 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-bold">菜单推荐</h2><span className="text-xs text-slate-500">识别来源：{menuData.recognition.source === "image" ? "菜单图片" : "菜单文字"}</span></div><p className="mt-2 text-sm text-slate-600">{menuStatusLabels[menuData.status]}</p><p className="mt-2 text-xs text-slate-500">识别 {menuData.recognition.detectedCount} 项 · 有效 {menuData.recognition.validCount} 项 · 排除 {menuData.recognition.rejectedCount} 项</p>{menuData.recognition.warnings.map((warning) => <p key={warning} className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">识别提示：{warning}</p>)}{menuData.pendingConfirmation.length ? <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 className="font-semibold text-amber-900">价格未知，暂不作为预算内首选</h3>{menuData.pendingConfirmation.map((item) => <div key={item.temporaryId} className="mt-3 flex flex-wrap items-center gap-2"><span className="min-w-28 text-sm">{item.name}</span><input aria-label={`${item.name}实际价格`} value={priceInputs[item.temporaryId] ?? ""} onChange={(event) => setPriceInputs((current) => ({ ...current, [item.temporaryId]: event.target.value }))} inputMode="decimal" placeholder="实际价格" className="w-28 rounded-lg border border-amber-300 px-2 py-1" /><button type="button" onClick={() => confirmPrice(item)} disabled={menuLoading} className="rounded-lg bg-amber-700 px-3 py-1 text-sm font-semibold text-white">按实际价格重新推荐</button></div>)}</div> : null}<MenuCards recommendations={menuData.recommendations} selectedId={pendingPurchase?.item.candidateId ?? null} onSelect={(item) => selectRecommendation(item, menuData.runId, "MENU")} /></section>}
     {!menuData && <div className="mt-4 text-center"><button type="button" onClick={inputMenuText} className="text-sm text-slate-500 underline">手动输入菜单文字</button><span className="mx-2 text-slate-300">·</span><button type="button" onClick={() => void recommend(false)} className="text-sm text-slate-500 underline">改用历史推荐</button></div>}
-    {(!menuData || data) && <>{loading && <div role="status" className="py-16 text-center text-sm text-slate-500">正在结合预算和近期正餐生成推荐…</div>}{!loading && data?.status === "NO_RECOMMENDATIONS" && <div className="mt-8 rounded-2xl border border-dashed border-stone-300 bg-white py-16 text-center text-sm text-slate-500">当前没有符合时段、忌口和价格上限的候选餐食。</div>}{!loading && data?.recommendations.length ? <MenuCards recommendations={data.recommendations} selectedId={pendingPurchase?.item.candidateId ?? null} onSelect={(item) => selectRecommendation(item, data.runId, "HISTORY")} /> : null}{data && <p className="mt-6 text-center text-xs text-slate-400">本次计算 {data.durationMs.toFixed(2)} ms</p>}</>}
+    {(!menuData || data) && <>{loading && <div role="status" className="py-16 text-center text-sm text-slate-500">正在结合预算和近期正餐生成推荐…</div>}{!loading && data?.status === "NO_RECOMMENDATIONS" && <div className="mt-8 rounded-2xl border border-dashed border-stone-300 bg-white py-16 text-center text-sm text-slate-500">当前没有通过启用状态、明确价格上限和严格忌口的候选餐食。</div>}{!loading && data?.recommendations.length ? <MenuCards recommendations={data.recommendations} selectedId={pendingPurchase?.item.candidateId ?? null} onSelect={(item) => selectRecommendation(item, data.runId, "HISTORY")} /> : null}{data && <p className="mt-6 text-center text-xs text-slate-400">本次计算 {data.durationMs.toFixed(2)} ms</p>}</>}
     {pendingPurchase && <section className="mx-auto mt-8 max-w-xl rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><h2 className="text-lg font-bold text-emerald-950">确认实际消费</h2><p className="mt-2 text-sm text-emerald-900">只有点击最终确认后才会写入消费记录。</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="grid gap-1.5 text-sm text-emerald-950">餐食<input value={pendingPurchase.item.name} disabled className="rounded-lg border border-emerald-200 bg-white px-3 py-2 disabled:text-slate-700" /></label><label className="grid gap-1.5 text-sm text-emerald-950">实际金额（元）<input value={pendingPurchase.actualPrice} onChange={(event) => setPendingPurchase({ ...pendingPurchase, actualPrice: event.target.value })} inputMode="decimal" className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label><label className="grid gap-1.5 text-sm text-emerald-950 sm:col-span-2">消费时间<input type="datetime-local" value={pendingPurchase.occurredAt} onChange={(event) => setPendingPurchase({ ...pendingPurchase, occurredAt: event.target.value })} className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label></div><div className="mt-5 flex gap-3"><button type="button" disabled={confirmingPurchase} onClick={() => void confirmPurchase()} className="rounded-lg bg-emerald-800 px-4 py-2 font-semibold text-white disabled:opacity-50">{confirmingPurchase ? "正在记账…" : "确认购买并记账"}</button><button type="button" disabled={confirmingPurchase} onClick={() => setPendingPurchase(null)} className="rounded-lg border border-emerald-700 px-4 py-2 font-semibold text-emerald-900">取消</button></div></section>}
     {purchaseMessage && <p role="status" className="mx-auto mt-6 max-w-xl rounded-xl bg-emerald-100 p-4 text-center text-sm font-semibold text-emerald-900">{purchaseMessage}</p>}
     {menuData?.timing && <p className="mt-5 text-center text-xs text-slate-400">处理耗时：总计 {menuData.timing.totalMs} ms · 提取 {menuData.timing.extractionMs} ms · 上下文 {menuData.timing.contextMs} ms · 排序 {menuData.timing.rankingMs} ms</p>}

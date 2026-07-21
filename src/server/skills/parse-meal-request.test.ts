@@ -11,10 +11,21 @@ describe("parse_meal_request", () => {
     });
   });
 
-  it("不要辣会成为临时严格避让且不会启用想吃辣", () => {
+  it("普通不要会成为软偏好且不会启用想吃辣", () => {
     const result = parseMealRequest("不要辣，想吃米饭");
     expect(result.quickTags).not.toContain("SPICY");
     expect(result.avoidedTerms).toContain("辣");
+    expect(result.strictAvoidedTerms).toEqual([]);
     expect(result.preferredTerms).toContain("米饭");
+  });
+
+  it("只有明确过敏或不能吃才成为严格避让", () => {
+    const result = parseMealRequest("花生过敏，不能吃香菜");
+    expect(result.strictAvoidedTerms).toEqual(expect.arrayContaining(["花生", "香菜"]));
+  });
+
+  it("数量不会被误识别为价格上限，左右价位作为目标价", () => {
+    expect(parseMealRequest("推荐2个包子").hardPriceLimitCents).toBeUndefined();
+    expect(parseMealRequest("想吃20元左右的饭").targetPriceCents).toBe(2_000);
   });
 });

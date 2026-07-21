@@ -55,6 +55,117 @@ export function markDuplicate(candidate: ImportedTransactionCandidate, existing:
     : candidate;
 }
 
+interface RefundLinkTarget {
+  id: string;
+  kind: "CANDIDATE" | "EXISTING";
+  category: TransactionCategory;
+  amountCents: number;
+  occurredAt: string;
+  itemName: string;
+  merchant: string | null;
+  isFixedExpense: boolean;
+  rawReference: string;
+  duplicateStatus?: ImportedTransactionCandidate["duplicateStatus"];
+  needsReview?: boolean;
+}
+
+function matchText(value: string | null) {
+  return String(value ?? "")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/平台商户|商户|餐厅|退款|微信支付/g, "")
+    .replace(/[\s·（）()\-_—]/g, "");
+}
+
+function textMatches(left: string | null, right: string | null) {
+  const normalizedLeft = matchText(left);
+  const normalizedRight = matchText(right);
+  return Boolean(normalizedLeft && normalizedRight && (normalizedLeft === normalizedRight || normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft)));
+}
+
+function statusRefundAmountMatches(rawReference: string, amountCents: number) {
+  const match = rawReference.match(/退款[^0-9]{0,12}(\d+(?:\.\d{1,2})?)/);
+  return Boolean(match && Math.round(Number(match[1]) * 100) === amountCents);
+}
+
+function refundLinkScore(refund: ImportedTransactionCandidate, expense: RefundLinkTarget, remainingCents: number) {
+  if (remainingCents < refund.amountCents) return Number.NEGATIVE_INFINITY;
+  const refundTime = new Date(refund.occurredAt).getTime();
+  const expenseTime = new Date(expense.occurredAt).getTime();
+  const differenceMs = refundTime - expenseTime;
+  if (differenceMs < -5 * 60_000 || differenceMs > 45 * 86_400_000) return Number.NEGATIVE_INFINITY;
+
+  const merchantMatches = textMatches(refund.merchant, expense.merchant);
+  const itemMatches = textMatches(refund.itemName, expense.itemName);
+  let score = refund.amountCents === expense.amountCents ? 80 : 25;
+  if (merchantMatches) score += 55;
+  if (itemMatches) score += 30;
+  if (refund.category === expense.category) score += 12;
+  if (/已全额退款|已退款/.test(expense.rawReference)) score += 15;
+  if (statusRefundAmountMatches(expense.rawReference, refund.amountCents)) score += 60;
+  if (differenceMs <= 24 * 60 * 60_000) score += 20;
+  else if (differenceMs <= 7 * 86_400_000) score += 10;
+  if (!merchantMatches && !itemMatches && differenceMs > 6 * 60 * 60_000) score -= 60;
+  if (expense.kind === "CANDIDATE" && expense.duplicateStatus === "POSSIBLE_DUPLICATE") score -= 35;
+  return score;
+}
+
+export function linkRefundCandidates(candidates: ImportedTransactionCandidate[], existing: TransactionRecord[]) {
+  const existingRefunded = new Map<string, number>();
+  for (const transaction of existing) {
+    if (transaction.type === "REFUND" && transaction.originalTransactionId) {
+      existingRefunded.set(transaction.originalTransactionId, (existingRefunded.get(transaction.originalTransactionId) ?? 0) + transaction.amountCents);
+    }
+  }
+
+  const candidateRemaining = new Map<string, number>();
+  const existingRemaining = new Map<string, number>();
+  const candidateExpenses: RefundLinkTarget[] = candidates
+    .filter((item): item is ImportedTransactionCandidate & { category: TransactionCategory } => item.type === "EXPENSE" && item.category !== null)
+    .map((item) => {
+      candidateRemaining.set(item.temporaryId, item.amountCents);
+      return { id: item.temporaryId, kind: "CANDIDATE", category: item.category, amountCents: item.amountCents, occurredAt: item.occurredAt, itemName: item.itemName, merchant: item.merchant, isFixedExpense: item.isFixedExpense, rawReference: item.rawReference, duplicateStatus: item.duplicateStatus, needsReview: item.needsReview };
+    });
+  const existingExpenses: RefundLinkTarget[] = existing
+    .filter((item): item is TransactionRecord & { category: TransactionCategory } => item.type === "EXPENSE" && item.category !== null)
+    .map((item) => {
+      existingRemaining.set(item.id, Math.max(item.amountCents - (existingRefunded.get(item.id) ?? 0), 0));
+      return { id: item.id, kind: "EXISTING", category: item.category, amountCents: item.amountCents, occurredAt: item.occurredAt, itemName: item.itemName, merchant: item.merchant, isFixedExpense: item.isFixedExpense, rawReference: "" };
+    });
+  const targets = [...candidateExpenses, ...existingExpenses];
+  const linked = new Map<string, ImportedTransactionCandidate>();
+
+  for (const refund of candidates.filter((item) => item.type === "REFUND").sort((left, right) => new Date(left.occurredAt).getTime() - new Date(right.occurredAt).getTime())) {
+    if (refund.originalTransactionId || refund.originalCandidateTemporaryId) continue;
+    const scored = targets
+      .map((target) => ({ target, score: refundLinkScore(refund, target, target.kind === "CANDIDATE" ? candidateRemaining.get(target.id) ?? 0 : existingRemaining.get(target.id) ?? 0) }))
+      .filter((entry) => Number.isFinite(entry.score) && entry.score >= 70)
+      .sort((left, right) => right.score - left.score);
+    const best = scored[0];
+    const ambiguous = best && scored[1] && best.score - scored[1].score < 12;
+    if (!best || ambiguous) {
+      const reason = ambiguous ? "找到多个相近的原支出，需要确认退款关联" : "未找到可信的原支出，需要确认退款关联";
+      linked.set(refund.temporaryId, { ...refund, needsReview: true, reviewReasons: [...new Set([...refund.reviewReasons, reason])] });
+      continue;
+    }
+
+    const remaining = best.target.kind === "CANDIDATE" ? candidateRemaining : existingRemaining;
+    remaining.set(best.target.id, (remaining.get(best.target.id) ?? 0) - refund.amountCents);
+    const reviewReasons = refund.reviewReasons.filter((reason) => reason !== "分类需要确认");
+    if (best.target.needsReview) reviewReasons.push("关联的原支出仍需复核");
+    linked.set(refund.temporaryId, {
+      ...refund,
+      category: best.target.category,
+      isFixedExpense: best.target.isFixedExpense,
+      originalTransactionId: best.target.kind === "EXISTING" ? best.target.id : null,
+      originalCandidateTemporaryId: best.target.kind === "CANDIDATE" ? best.target.id : null,
+      needsReview: refund.duplicateStatus === "POSSIBLE_DUPLICATE" || reviewReasons.length > 0,
+      reviewReasons,
+    });
+  }
+
+  return candidates.map((item) => linked.get(item.temporaryId) ?? item);
+}
+
 export function candidate(input: Partial<ImportedTransactionCandidate> & Pick<ImportedTransactionCandidate, "source" | "amountCents" | "occurredAt" | "itemName" | "rawReference">): ImportedTransactionCandidate {
   const text = `${input.itemName} ${input.merchant ?? ""} ${input.rawReference}`;
   const category = input.category ?? (input.type === "INCOME" ? null : inferCategory(text));
@@ -64,8 +175,9 @@ export function candidate(input: Partial<ImportedTransactionCandidate> & Pick<Im
   return importedTransactionCandidateSchema.parse({
     temporaryId: input.temporaryId ?? randomUUID(),
     type: input.type ?? detectType(text), category, amountCents: input.amountCents, occurredAt: input.occurredAt,
-    itemName: input.itemName, merchant: input.merchant ?? "", note: input.note ?? "", isFixedExpense: input.isFixedExpense ?? false,
+    itemName: input.itemName, merchant: input.merchant ?? "", rawItemName: input.rawItemName ?? input.itemName, rawMerchant: input.rawMerchant ?? input.merchant ?? "", note: input.note ?? "", isFixedExpense: input.isFixedExpense ?? false,
     originalTransactionId: input.originalTransactionId ?? null,
+    originalCandidateTemporaryId: input.originalCandidateTemporaryId ?? null,
     source: input.source, confidence: input.confidence ?? 0.8, rawReference: input.rawReference,
     duplicateStatus: input.duplicateStatus ?? "NEW", duplicateReason: input.duplicateReason ?? null,
     needsReview: input.needsReview ?? (reviewReasons.length > 0 || (input.confidence ?? 0.8) < 0.75),

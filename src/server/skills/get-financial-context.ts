@@ -12,6 +12,7 @@ export const financialContextInputSchema = z.object({
 
 export interface FinancialContextData {
   budgetPeriod: string;
+  currentBalanceCents: number;
   flexibleBudgetCents: number;
   actualNetSpendingCents: number;
   remainingBudgetCents: number;
@@ -33,16 +34,13 @@ export function getFinancialContext(input: unknown, store: SkillReadStore = skil
     const bounds = shanghaiPeriodBounds(budgetPeriod);
     const settings = store.readSettings(budgetPeriod);
     const transactions = store.readPeriodTransactions(bounds.start, bounds.end);
-    const availableAfterPlansCents = settings.monthlyAllowanceCents - settings.fixedExpenseCents - settings.monthlySavingsTargetCents - settings.requiredReserveCents;
-    if (settings.totalBudgetCents > Math.max(availableAfterPlansCents, 0)) {
-      return skillFailure("INVALID_BUDGET_PLAN", "总预算超过扣除固定支出、储蓄目标和必要预留后的可用金额");
-    }
     const flexibleBudgetCents = settings.totalBudgetCents;
     const actualNetSpendingCents = calculateNetVariableSpending({ transactions, periodStart: bounds.start, periodEnd: bounds.end });
     const remainingBudgetCents = calculateRemainingBudget({ plannedVariableBudgetCents: flexibleBudgetCents, actualNetVariableSpendingCents: actualNetSpendingCents });
     const daily = calculateRecommendedDailyBudget({ remainingBudgetCents, currentDate: parsed.queryDate, periodEnd: bounds.end });
     return skillSuccess({
       budgetPeriod,
+      currentBalanceCents: settings.currentBalanceCents,
       flexibleBudgetCents,
       actualNetSpendingCents,
       remainingBudgetCents,

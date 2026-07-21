@@ -56,6 +56,11 @@ export async function registerUser(input: RegisterInput): Promise<AuthUser> {
         "preferredDailyNecessities", "avoidedBrands", "protectedCategories", "notes", "createdAt", "updatedAt"
       ) VALUES (?, ?, 3000, 1500, 0, 1800, 3, 3000, 5000, 24, 'MEDIUM', 1, '[]', '[]', '[]', '[]', '[]', ?, NULL, ?, ?)
     `).run(preferenceId, userId, JSON.stringify(["MEAL", "DAILY_NECESSITY", "STUDY", "TRANSPORT", "MEDICAL"]), now, now);
+    const accountStatement = database.prepare(`INSERT INTO "Account" ("id","userId","name","type","openingBalanceCents","isDefault","enabled","createdAt","updatedAt") VALUES (?,?,?,?,0,?,1,?,?)`);
+    accountStatement.run(`${userId}-wechat`, userId, "微信", "WECHAT", 1, now, now);
+    accountStatement.run(`${userId}-alipay`, userId, "支付宝", "ALIPAY", 0, now, now);
+    accountStatement.run(`${userId}-bank`, userId, "银行卡", "BANK", 0, now, now);
+    accountStatement.run(`${userId}-cash`, userId, "现金", "CASH", 0, now, now);
     database.exec("COMMIT");
     return { id: userId, displayName: input.displayName, email: input.email };
   } catch (error) {

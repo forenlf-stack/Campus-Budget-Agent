@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealPeriods } from "@/lib/meal-candidates";
 import {
   mealRecommendationCardSchema,
@@ -66,9 +67,11 @@ export const menuRecommendationSourceSchema = z.discriminatedUnion("type", [
 export const menuMealRecommendationInputSchema = z.object({
   source: menuRecommendationSourceSchema,
   quickTags: z.array(z.enum(mealRecommendationQuickTags)).max(mealRecommendationQuickTags.length).default([]),
-  userRequest: z.string().trim().max(300).default(""),
+  userRequest: z.string().trim().max(agentCapabilities.languageUnderstanding.maximumRequestCharacters).default(""),
+  maxRecommendations: z.number().int().min(1).max(agentCapabilities.mealRecommendations.maximumCount)
+    .default(agentCapabilities.mealRecommendations.defaultCount),
   skipAgentInterpretation: z.boolean().default(false),
-  confirmedPrices: z.array(confirmedMenuPriceSchema).max(100).default([]),
+  confirmedPrices: z.array(confirmedMenuPriceSchema).max(300).default([]),
   date: z.date().refine((value) => Number.isFinite(value.getTime()), "查询日期无效").optional(),
 }).strict();
 
@@ -95,7 +98,7 @@ export const menuMealRecommendationResponseSchema = z.object({
   location: nonEmptyText.optional(),
   recognition: menuRecognitionSummarySchema,
   pendingConfirmation: z.array(menuCandidateSchema),
-  recommendations: z.array(mealRecommendationCardSchema).max(4),
+  recommendations: z.array(mealRecommendationCardSchema).max(agentCapabilities.mealRecommendations.maximumCount),
   timing: menuRecommendationTimingSchema,
   rejectedCandidateCount: z.number().int().nonnegative(),
 }).strict();

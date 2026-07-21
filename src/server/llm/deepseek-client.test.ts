@@ -39,4 +39,14 @@ describe("deepseek_client", () => {
 
     expect(requestBody).toMatchObject({ thinking: { type: "enabled" } });
   });
+
+  it("瞬时失败后自动重试一次", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("temporary network failure"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "{\"ok\":true}" } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await expect(callDeepSeekJson("system", "user", z.object({ ok: z.literal(true) }), { fetchImplementation }))
+      .resolves.toEqual({ ok: true });
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
 });

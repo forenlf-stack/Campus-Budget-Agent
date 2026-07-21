@@ -12,9 +12,13 @@ export const importedTransactionCandidateSchema = z.object({
   occurredAt: z.iso.datetime(),
   itemName: z.string().trim().min(1).max(100),
   merchant: z.string().trim().max(100),
+  rawItemName: z.string().trim().max(300),
+  rawMerchant: z.string().trim().max(300),
   note: z.string().trim().max(500),
   isFixedExpense: z.boolean(),
   originalTransactionId: z.string().trim().min(1).nullable(),
+  originalCandidateTemporaryId: z.string().trim().min(1).max(100).nullable(),
+  accountId: z.string().trim().min(1).nullable().optional(),
   source: z.enum(transactionImportSourceValues),
   confidence: z.number().min(0).max(1),
   rawReference: z.string().trim().min(1).max(1000),
@@ -39,7 +43,7 @@ export const transactionImportPreviewSchema = z.object({
 
 export const transactionImportCommitSchema = z.object({
   importId: z.string().trim().min(1),
-  transactions: z.array(importedTransactionCandidateSchema.omit({ duplicateStatus: true, duplicateReason: true, needsReview: true, reviewReasons: true, confidence: true, rawReference: true, source: true })).min(1).max(1000),
+  transactions: z.array(importedTransactionCandidateSchema.omit({ duplicateStatus: true, duplicateReason: true, needsReview: true, reviewReasons: true, confidence: true, rawReference: true, rawMerchant: true, rawItemName: true, source: true })).min(1).max(1000),
 }).strict();
 
 export type ImportedTransactionCandidate = z.infer<typeof importedTransactionCandidateSchema>;

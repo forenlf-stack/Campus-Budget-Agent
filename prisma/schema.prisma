@@ -31,6 +31,20 @@ enum TransactionSource {
   AGENT
 }
 
+enum AccountType {
+  WECHAT
+  ALIPAY
+  BANK
+  CASH
+  OTHER
+}
+
+enum RecurrenceFrequency {
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
 enum MealPeriod {
   BREAKFAST
   LUNCH
@@ -79,6 +93,10 @@ model UserProfile {
   mealCandidates             MealCandidate[]
   decisions                  DecisionRecord[]
   sessions                   UserSession[]
+  accounts                   Account[]
+  transfers                  AccountTransfer[]
+  classificationRules        ClassificationRule[]
+  recurringBills             RecurringBill[]
 }
 
 model UserSession {
@@ -146,16 +164,106 @@ model Transaction {
   note                  String?
   isFixedExpense        Boolean              @default(false)
   originalTransactionId String?
+  accountId             String?
+  rawMerchant           String?
+  rawItemName           String?
+  rawReference          String?
+  deletedAt             DateTime?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   user                  UserProfile          @relation("UserTransactions", fields: [userId], references: [id], onDelete: Cascade)
   originalTransaction   Transaction?         @relation("TransactionRefunds", fields: [originalTransactionId], references: [id], onDelete: Restrict)
   refunds               Transaction[]        @relation("TransactionRefunds")
   decision              DecisionRecord?
+  account               Account?              @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([userId, occurredAt])
   @@index([userId, category, occurredAt])
   @@index([originalTransactionId])
+  @@index([userId, deletedAt, occurredAt])
+  @@index([accountId, occurredAt])
+}
+
+model Account {
+  id                  String            @id
+  userId              String
+  name                String
+  type                AccountType
+  openingBalanceCents Int               @default(0)
+  isDefault           Boolean           @default(false)
+  enabled             Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  user                UserProfile       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions        Transaction[]
+  outgoingTransfers   AccountTransfer[] @relation("TransferFrom")
+  incomingTransfers   AccountTransfer[] @relation("TransferTo")
+  recurringBills      RecurringBill[]
+
+  @@index([userId, enabled])
+  @@unique([userId, name])
+}
+
+model AccountTransfer {
+  id            String      @id
+  userId        String
+  fromAccountId String
+  toAccountId   String
+  amountCents   Int
+  occurredAt    DateTime
+  note          String?
+  deletedAt     DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromAccount   Account     @relation("TransferFrom", fields: [fromAccountId], references: [id], onDelete: Restrict)
+  toAccount     Account     @relation("TransferTo", fields: [toAccountId], references: [id], onDelete: Restrict)
+
+  @@index([userId, occurredAt])
+  @@index([fromAccountId, occurredAt])
+  @@index([toAccountId, occurredAt])
+}
+
+model ClassificationRule {
+  id                 String              @id
+  userId             String
+  merchantPattern    String
+  itemPattern        String?
+  normalizedMerchant String
+  category           TransactionCategory
+  priority           Int                 @default(100)
+  enabled            Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  user               UserProfile         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, merchantPattern, itemPattern])
+  @@index([userId, enabled, priority])
+}
+
+model RecurringBill {
+  id             String               @id
+  userId         String
+  name           String
+  type           TransactionType
+  category       TransactionCategory?
+  amountCents    Int
+  itemName       String
+  merchant       String?
+  accountId      String?
+  note           String?
+  isFixedExpense Boolean              @default(true)
+  frequency      RecurrenceFrequency
+  nextDueAt      DateTime
+  reminderDays   Int                  @default(3)
+  enabled        Boolean              @default(true)
+  lastGeneratedAt DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  user           UserProfile          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account        Account?             @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([userId, enabled, nextDueAt])
 }
 
 model MealCandidate {

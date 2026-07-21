@@ -5,7 +5,7 @@ import { transactionCategories, type TransactionCategory } from "./budget";
 const cents = z.number().int().safe().nonnegative();
 const category = z.enum(transactionCategories);
 
-export const settingsSchema = z.object({
+const settingsFieldsSchema = z.object({
   period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   monthlyAllowanceCents: cents,
   currentBalanceCents: cents,
@@ -25,20 +25,25 @@ export const settingsSchema = z.object({
   foodDislikes: z.array(z.string().trim().min(1).max(50)).max(50),
   foodAllergens: z.array(z.string().trim().min(1).max(50)).max(50),
   protectedCategories: z.array(category).max(transactionCategories.length),
-}).superRefine((input, context) => {
+});
+
+export const storedSettingsSchema = settingsFieldsSchema.superRefine((input, context) => {
   if (input.recommendedLunchPriceCents > input.lunchHardLimitCents) {
     context.addIssue({ code: "custom", path: ["recommendedLunchPriceCents"], message: "午餐建议价格不能超过午餐硬上限" });
   }
-  const availableCents = input.monthlyAllowanceCents - input.fixedExpenseCents - input.monthlySavingsTargetCents - input.requiredReserveCents;
+});
+
+export const settingsSchema = storedSettingsSchema.superRefine((input, context) => {
+  const availableCents = input.currentBalanceCents - input.fixedExpenseCents - input.monthlySavingsTargetCents - input.requiredReserveCents;
   if (input.totalBudgetCents > Math.max(availableCents, 0)) {
-    context.addIssue({ code: "custom", path: ["totalBudgetCents"], message: "总预算不能超过扣除固定支出、储蓄目标和预留资金后的可用金额" });
+    context.addIssue({ code: "custom", path: ["totalBudgetCents"], message: "总预算不能超过当前可用余额扣除固定支出、储蓄目标和预留资金后的金额" });
   }
 });
 
 export type SettingsInput = z.infer<typeof settingsSchema>;
 
 export function calculateSettingsSummary(input: SettingsInput) {
-  const availableAfterPlansCents = input.monthlyAllowanceCents - input.fixedExpenseCents - input.monthlySavingsTargetCents - input.requiredReserveCents;
+  const availableAfterPlansCents = input.currentBalanceCents - input.fixedExpenseCents - input.monthlySavingsTargetCents - input.requiredReserveCents;
   return {
     totalBudgetCents: input.totalBudgetCents,
     availableAfterPlansCents,

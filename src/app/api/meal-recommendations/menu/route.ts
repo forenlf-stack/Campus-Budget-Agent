@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import {
   confirmedMenuPriceSchema,
   menuImageMimeTypes,
@@ -14,10 +15,10 @@ import { createSkillReadStore } from "@/server/skill-read-store";
 export const runtime = "nodejs";
 
 const maxImageBytes = 6 * 1024 * 1024;
-const totalTimeoutMs = 55_000;
+const totalTimeoutMs = 90_000;
 const quickTagsSchema = z.array(z.enum(mealRecommendationQuickTags)).max(mealRecommendationQuickTags.length);
 const confirmedPricesSchema = z.union([
-  z.array(confirmedMenuPriceSchema).max(100),
+  z.array(confirmedMenuPriceSchema).max(300),
   z.record(z.string().trim().min(1).max(100), z.number().int().safe().positive()).transform((prices) => Object.entries(prices).map(([temporaryId, priceCents]) => ({ temporaryId, priceCents }))),
 ]);
 type SupportedMimeType = (typeof menuImageMimeTypes)[number];
@@ -30,7 +31,7 @@ class RequestError extends Error {
 
 class WorkflowTimeoutError extends Error {
   constructor() {
-    super("菜单识别和推荐超过55秒，请重试或改用菜单文字");
+    super("菜单识别和推荐超过90秒，请重试或改用菜单文字");
     this.name = "WorkflowTimeoutError";
   }
 }
@@ -86,7 +87,9 @@ export async function POST(request: NextRequest) {
     if (Boolean(image) === Boolean(menuText)) throw new RequestError(400, "INVALID_SOURCE", "image和menuText必须且只能提供一个");
 
     const quickTags = quickTagsSchema.parse(parseJsonField(formData.get("quickTags"), [], "quickTags"));
-    const userRequest = z.string().trim().max(300).parse(formData.get("userRequest") ?? "");
+    const userRequest = z.string().trim().max(agentCapabilities.languageUnderstanding.maximumRequestCharacters).parse(formData.get("userRequest") ?? "");
+    const maxRecommendations = z.coerce.number().int().min(1).max(agentCapabilities.mealRecommendations.maximumCount)
+      .default(agentCapabilities.mealRecommendations.defaultCount).parse(formData.get("maxRecommendations") ?? undefined);
     const skipAgentInterpretation = formData.get("skipAgentInterpretation") === "true";
     const confirmedPrices = confirmedPricesSchema.parse(parseJsonField(formData.get("confirmedPrices"), [], "confirmedPrices"));
     let source: { type: "image"; image: string; mimeType: SupportedMimeType } | { type: "menuText"; menuText: string };
@@ -102,7 +105,7 @@ export async function POST(request: NextRequest) {
       source = { type: "menuText", menuText };
     }
 
-    const result = await withMenuWorkflowTimeout(runMenuMealRecommendation({ source, quickTags, userRequest, skipAgentInterpretation, confirmedPrices }, { store: createSkillReadStore(user.id) }));
+    const result = await withMenuWorkflowTimeout(runMenuMealRecommendation({ source, quickTags, userRequest, maxRecommendations, skipAgentInterpretation, confirmedPrices }, { store: createSkillReadStore(user.id) }));
     if (!result.success) {
       const timeout = result.error.code === "MENU_RECOGNITION_TIMEOUT";
       const unavailable = result.error.code === "MENU_RECOGNITION_NOT_CONFIGURED" || result.error.code === "MENU_RECOGNITION_UPSTREAM_ERROR";

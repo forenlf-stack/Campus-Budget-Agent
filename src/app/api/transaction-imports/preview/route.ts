@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { importedTransactionCandidateSchema, transactionImportPreviewSchema } from "@/lib/transaction-imports";
+import { normalizeImportedCandidate } from "@/lib/merchant-normalization";
 import { requireApiUser } from "@/server/auth";
+import { applyClassificationRules, listClassificationRules } from "@/server/classification-rule-store";
 import { listTransactionsBetween } from "@/server/transaction-store";
 import { parseTransactionImage } from "@/server/transaction-imports/image-parser";
-import { markDuplicate, profileSignals } from "@/server/transaction-imports/import-utils";
+import { linkRefundCandidates, markDuplicate, profileSignals } from "@/server/transaction-imports/import-utils";
 import { saveImportPreview } from "@/server/transaction-imports/transaction-import-store";
 import { parseSpreadsheet } from "@/server/transaction-imports/spreadsheet-parser";
 import { parseTransactionText } from "@/server/transaction-imports/text-parser";
@@ -48,7 +50,9 @@ export async function POST(request: NextRequest) {
     }
 
     const existing = listTransactionsBetween(user.id, new Date(Date.now() - 3 * 365 * 86_400_000), new Date(Date.now() + 86_400_000));
-    const candidates = result.candidates.map((item) => markDuplicate(importedTransactionCandidateSchema.parse(item), existing));
+    const normalized = result.candidates.map((item) => normalizeImportedCandidate(importedTransactionCandidateSchema.parse(item)));
+    const classified = applyClassificationRules(normalized, listClassificationRules(user.id));
+    const candidates = linkRefundCandidates(classified.map((item) => markDuplicate(item, existing)), existing);
     const preview = saveImportPreview(user.id, { source, candidates, rejectedCount: result.rejectedCount, warnings: result.warnings, profileSignals: profileSignals(candidates) });
     return NextResponse.json(transactionImportPreviewSchema.parse(preview));
   } catch (error) {

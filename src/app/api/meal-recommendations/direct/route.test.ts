@@ -26,7 +26,7 @@ describe("POST /api/meal-recommendations/direct", () => {
     const response = await POST(request as Parameters<typeof POST>[0]);
     const payload = await response.json();
     expect(response.status).toBe(200);
-    expect(runFixedMealRecommendation).toHaveBeenCalledWith({ quickTags: [], excludeCandidateIds: [], userRequest: "", interpretedRequest: null }, expect.objectContaining({ store: expect.any(Object) }));
+    expect(runFixedMealRecommendation).toHaveBeenCalledWith({ quickTags: [], excludeCandidateIds: [], userRequest: "", maxRecommendations: 6, interpretedRequest: null }, expect.objectContaining({ store: expect.any(Object) }));
     expect(payload).toMatchObject({ status: "READY", agentResponse: null, recommendations: [{ name: "鸡腿饭", merchant: "第一食堂一楼", acquisitionLabel: "东校区", priceCents: 1_500, actionLabel: "选这个", shortTags: ["价格合适"], risk: "暂无明显风险" }] });
     expect(payload.durationMs).toBeGreaterThanOrEqual(0);
     expect(directMealRecommendationResponseSchema.safeParse(payload).success).toBe(true);

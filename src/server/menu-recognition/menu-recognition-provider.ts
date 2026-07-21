@@ -35,8 +35,8 @@ export class MenuRecognitionProviderError extends Error {
 }
 
 function configuredTimeout(value: string | undefined): number {
-  const timeout = Number(value ?? 15_000);
-  return Number.isSafeInteger(timeout) && timeout > 0 ? Math.min(timeout, 15_000) : 15_000;
+  const timeout = Number(value ?? 30_000);
+  return Number.isSafeInteger(timeout) && timeout > 0 ? Math.min(timeout, 60_000) : 30_000;
 }
 
 export class FetchMenuRecognitionProvider implements MenuRecognitionProvider {
@@ -52,7 +52,7 @@ export class FetchMenuRecognitionProvider implements MenuRecognitionProvider {
     this.model = options.model ?? process.env.MENU_RECOGNITION_MODEL ?? "menu-recognition";
     this.timeoutMs = options.timeoutMs === undefined
       ? configuredTimeout(process.env.MENU_RECOGNITION_TIMEOUT_MS)
-      : Math.min(Math.max(options.timeoutMs, 1), 15_000);
+      : Math.min(Math.max(options.timeoutMs, 1), 60_000);
     this.fetchImplementation = options.fetchImplementation ?? fetch;
   }
 
@@ -120,7 +120,7 @@ export class GlmOcrMenuRecognitionProvider implements MenuRecognitionProvider {
     form.append("language_type", "CHN_ENG");
     form.append("probability", "true");
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await this.fetchImplementation(`${config.glmBaseUrl.replace(/\/$/, "")}/paas/v4/files/ocr`, { method: "POST", headers: { Authorization: `Bearer ${config.glmApiKey}` }, body: form, signal: controller.signal });
       if (!response.ok) throw new MenuRecognitionProviderError("MENU_RECOGNITION_UPSTREAM_ERROR", `GLM OCR 返回 ${response.status}`, response.status);
@@ -161,7 +161,7 @@ export class OpenAiCompatibleVisionMenuRecognitionProvider implements MenuRecogn
     if (!config.visionApiKey) throw new MenuRecognitionProviderError("MENU_RECOGNITION_NOT_CONFIGURED", "未配置多模态菜单模型 API Key");
     const controller = new AbortController();
     // Third-party gateways can spend additional time queueing and processing high-resolution images.
-    const timeout = setTimeout(() => controller.abort(), 45_000);
+    const timeout = setTimeout(() => controller.abort(), 60_000);
     try {
       const response = await this.fetchImplementation(`${config.visionBaseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
@@ -176,7 +176,7 @@ export class OpenAiCompatibleVisionMenuRecognitionProvider implements MenuRecogn
             ] },
           ],
           temperature: 0,
-          max_completion_tokens: 2_000,
+          max_completion_tokens: 4_000,
         }),
         signal: controller.signal,
       });

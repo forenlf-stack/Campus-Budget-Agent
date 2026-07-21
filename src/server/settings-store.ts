@@ -1,7 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 
-import { settingsSchema, type SettingsInput } from "@/lib/settings";
+import { calculateCurrentBalanceCents } from "@/lib/balance";
+import { settingsSchema, storedSettingsSchema, type SettingsInput } from "@/lib/settings";
 
 function openDatabase() {
   const database = new DatabaseSync(path.join(process.cwd(), "dev.db"));
@@ -37,7 +38,7 @@ export function readSettings(userId: string, period = getCurrentPeriod()): Setti
   const database = openDatabase();
   try {
     const profile = database.prepare(`
-      SELECT "openingBalanceCents", "expectedMonthlyIncomeCents", "fixedMonthlyExpenseCents",
+      SELECT "openingBalanceCents", "balanceAsOf", "expectedMonthlyIncomeCents", "fixedMonthlyExpenseCents",
              "emergencyReserveCents", "savingsTargetCents", "monthlySpendingBudgetCents", "allowanceDay", "defaultLocation"
       FROM "UserProfile" WHERE "id" = ?
     `).get(userId) as Record<string, unknown> | undefined;
@@ -50,10 +51,25 @@ export function readSettings(userId: string, period = getCurrentPeriod()): Setti
     if (!profile || !preference) {
       throw new Error("未找到单用户配置，请先执行数据库种子命令");
     }
-    return settingsSchema.parse({
+    const now = new Date();
+    const balanceAsOf = new Date(String(profile.balanceAsOf));
+    const delta = database.prepare(`
+      SELECT COALESCE(SUM(CASE WHEN "type" = 'EXPENSE' THEN -"amountCents" ELSE "amountCents" END), 0) AS "total"
+      FROM "Transaction"
+      WHERE "userId" = ? AND "deletedAt" IS NULL AND "occurredAt" > ? AND "occurredAt" <= ?
+    `).get(userId, balanceAsOf.toISOString(), now.toISOString()) as { total: number };
+    const currentBalanceCents = calculateCurrentBalanceCents({
+      openingBalanceCents: Number(profile.openingBalanceCents),
+      balanceAsOf,
+      now,
+      monthlyAllowanceCents: Number(profile.expectedMonthlyIncomeCents),
+      allowanceDay: Number(profile.allowanceDay),
+      transactionDeltaCents: delta.total,
+    });
+    return storedSettingsSchema.parse({
       period,
       monthlyAllowanceCents: profile.expectedMonthlyIncomeCents,
-      currentBalanceCents: profile.openingBalanceCents,
+      currentBalanceCents,
       fixedExpenseCents: profile.fixedMonthlyExpenseCents,
       monthlySavingsTargetCents: profile.savingsTargetCents,
       requiredReserveCents: profile.emergencyReserveCents,
@@ -84,12 +100,13 @@ export function saveSettings(userId: string, input: SettingsInput): SettingsInpu
     const now = new Date().toISOString();
     const profileResult = database.prepare(`
       UPDATE "UserProfile" SET
-        "openingBalanceCents" = ?, "expectedMonthlyIncomeCents" = ?,
+        "openingBalanceCents" = ?, "balanceAsOf" = ?, "expectedMonthlyIncomeCents" = ?,
         "fixedMonthlyExpenseCents" = ?, "emergencyReserveCents" = ?,
         "savingsTargetCents" = ?, "monthlySpendingBudgetCents" = ?, "allowanceDay" = ?, "defaultLocation" = ?, "updatedAt" = ?
       WHERE "id" = ?
     `).run(
       data.currentBalanceCents,
+      now,
       data.monthlyAllowanceCents,
       data.fixedExpenseCents,
       data.requiredReserveCents,

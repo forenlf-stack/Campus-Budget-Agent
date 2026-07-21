@@ -5,7 +5,7 @@ import { skillFailure, skillSuccess, type SkillResult } from "@/lib/skill-result
 import { skillReadStore, type SkillReadStore } from "@/server/skill-read-store";
 
 export const retrieveMealCandidatesInputSchema = z.object({
-  mealPeriod: z.enum(mealPeriods),
+  mealPeriod: z.enum(mealPeriods).optional(),
   location: z.string().trim().min(1).max(100).optional(),
   maximumPriceCents: z.number().int().safe().positive().optional(),
   enabledOnly: z.boolean().default(true),

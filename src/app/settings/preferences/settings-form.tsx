@@ -212,6 +212,7 @@ export function SettingsForm() {
             <label className="grid gap-2 text-sm font-medium text-slate-700">生活费发放日<input className="rounded-xl border border-slate-200 px-4 py-3" type="number" min="1" max="31" value={form.allowanceDay} onChange={(event) => setForm({ ...form, allowanceDay: Number(event.target.value) })} /></label>
             <label className="grid gap-2 text-sm font-medium text-slate-700">默认地点<input className="rounded-xl border border-slate-200 px-4 py-3" value={form.defaultLocation} onChange={(event) => setForm({ ...form, defaultLocation: event.target.value })} placeholder="例如：学校东区" /></label>
           </div>
+          <p className="mt-4 rounded-xl bg-teal-50 px-4 py-3 text-xs leading-5 text-teal-800">当前可用余额会随每笔支出减少，随收入和退款增加，并在每月生活费发放日自动增加。手动修改并保存后，会以保存时刻作为新的余额计算基准。</p>
         </Section>
 
         <Section number="2" title="总消费预算">
@@ -222,7 +223,7 @@ export function SettingsForm() {
           <div className="mt-6 grid gap-3 rounded-2xl bg-slate-900 p-5 text-white sm:grid-cols-3">
             {[
               ["本月总消费预算", summary?.totalBudgetCents],
-              ["扣除计划后可用", summary?.availableAfterPlansCents],
+              ["当前余额扣除计划后可用", summary?.availableAfterPlansCents],
               ["未纳入预算金额", summary?.unbudgetedCents],
             ].map(([label, value]) => <div key={String(label)}><p className="text-xs text-slate-400">{label}</p><p className="mt-1 text-xl font-semibold">{typeof value === "number" ? `¥${(value / 100).toFixed(2)}` : "—"}</p></div>)}
           </div>
@@ -231,12 +232,13 @@ export function SettingsForm() {
         <Section number="3" title="消费偏好">
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             <MoneyField label="午餐建议价格" value={form.amounts.recommendedLunchPriceCents} onChange={(value) => updateAmount("recommendedLunchPriceCents", value)} />
-            <MoneyField label="午餐硬上限" value={form.amounts.lunchHardLimitCents} onChange={(value) => updateAmount("lunchHardLimitCents", value)} />
+            <MoneyField label="午餐参考上限" value={form.amounts.lunchHardLimitCents} onChange={(value) => updateAmount("lunchHardLimitCents", value)} />
             <label className="grid gap-2 text-sm font-medium text-slate-700">零食饮料每周次数上限<input className="rounded-xl border border-slate-200 px-4 py-3" type="number" min="0" max="100" value={form.weeklySnackDrinkLimit} onChange={(event) => setForm({ ...form, weeklySnackDrinkLimit: Number(event.target.value) })} /></label>
             <MoneyField label="零食饮料每周预算" value={form.amounts.weeklySnackDrinkBudgetCents} onChange={(value) => updateAmount("weeklySnackDrinkBudgetCents", value)} />
             <MoneyField label="单笔购物提醒金额" value={form.amounts.shoppingReminderThresholdCents} onChange={(value) => updateAmount("shoppingReminderThresholdCents", value)} />
             <label className="grid gap-2 text-sm font-medium text-slate-700">冷静期小时数<input className="rounded-xl border border-slate-200 px-4 py-3" type="number" min="0" max="720" value={form.coolingOffHours} onChange={(event) => setForm({ ...form, coolingOffHours: Number(event.target.value) })} /></label>
           </div>
+          <p className="mt-3 text-sm text-slate-500">参考上限用于排序和风险提醒，不会提前隐藏候选；只有你在对话中明确说“最多、不超过、以内”时才作为本次硬上限。</p>
         </Section>
 
         <Section number="4" title="饮食偏好">

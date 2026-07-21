@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import type { ImportedTransactionCandidate } from "@/lib/transaction-imports";
 import { callDeepSeekJson } from "@/server/llm/deepseek-client";
 import { candidate, detectType, normalizeAmountCents, normalizeDate } from "./import-utils";
@@ -33,7 +34,7 @@ export async function parseTransactionText(text: string) {
       "你是账单导入信息提取器。用户主动提供了微信、支付宝、银行短信或口述交易记录。逐笔提取真实存在的交易，不得创造或合并交易。金额使用整数分，时间转为ISO 8601（中国时区信息缺失时按+08:00）。退款为REFUND，收入为INCOME，其余为EXPENSE。category只能使用MEAL,SNACK_DRINK,DAILY_NECESSITY,STUDY,TRANSPORT,GAME_ENTERTAINMENT,RECHARGE_SUBSCRIPTION,MEDICAL,OTHER；收入category为null。不确定内容降低confidence并保留rawReference。只返回JSON。",
       text,
       modelSchema,
-      { timeoutMs: 25_000, thinking: "disabled" },
+      { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },
     );
     const candidates = output.transactions.flatMap((item): ImportedTransactionCandidate[] => {
       const occurredAt = normalizeDate(item.occurredAt);

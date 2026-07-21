@@ -33,10 +33,16 @@ export async function POST(request: NextRequest) {
     }
     if (!agentResponse && input.userRequest) {
       const fallback = parseMealRequest(input.userRequest);
-      const conditions = [fallback.hardPriceLimitCents ? `${fallback.hardPriceLimitCents / 100}元以内` : "", ...fallback.preferredTerms, ...fallback.avoidedTerms.map((item) => `避开${item}`)].filter(Boolean);
+      const conditions = [
+        fallback.hardPriceLimitCents ? `${fallback.hardPriceLimitCents / 100}元以内` : "",
+        fallback.targetPriceCents ? `${fallback.targetPriceCents / 100}元左右` : "",
+        ...fallback.preferredTerms,
+        ...fallback.avoidedTerms.map((item) => `尽量避开${item}`),
+        ...fallback.strictAvoidedTerms.map((item) => `严格避开${item}`),
+      ].filter(Boolean);
       agentResponse = { understanding: conditions.length ? `我理解你的重点是：${conditions.join("、")}。` : `我会按“${input.userRequest}”筛选。`, response: "我会结合当前总预算、口味偏好、地点和近期饮食记录给出候选。", source: "RULES", ...(llmFallbackReason ? { fallbackReason: llmFallbackReason } : {}) };
     }
-    const workflowInput = { quickTags: input.quickTags, excludeCandidateIds: input.excludeCandidateIds, userRequest: input.userRequest };
+    const workflowInput = { quickTags: input.quickTags, excludeCandidateIds: input.excludeCandidateIds, userRequest: input.userRequest, maxRecommendations: input.maxRecommendations };
     const result = runFixedMealRecommendation({ ...workflowInput, interpretedRequest }, { store: createSkillReadStore(user.id) });
     const durationMs = Math.round((performance.now() - startedAt) * 100) / 100;
     if (!result.success) return NextResponse.json({ error: result.error, durationMs }, { status: result.error.code === "INVALID_INPUT" ? 400 : 500 });

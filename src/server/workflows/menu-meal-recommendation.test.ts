@@ -71,9 +71,10 @@ describe("menu meal recommendation workflow", () => {
     expect(readSettings).not.toHaveBeenCalled();
   });
 
-  it("所有候选超预算时返回无推荐", async () => {
+  it("所有候选超过参考价时仍保留候选并展示风险", async () => {
     const result = await run([menuCandidate("a", { priceCents: 2_501 }), menuCandidate("b", { priceCents: 3_000 })]);
-    expect(result).toMatchObject({ success: true, data: { status: "NO_RECOMMENDATIONS", recommendations: [] } });
+    expect(result).toMatchObject({ success: true, data: { status: "READY" } });
+    if (result.success) expect(result.data.recommendations.every((item) => item.risk === "价格高于建议正餐价")).toBe(true);
   });
 
   it("所有候选命中严格忌口时返回无推荐", async () => {

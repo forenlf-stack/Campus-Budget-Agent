@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { readModelConfig } from "@/server/model-config-store";
 
 const completionSchema = z.object({
@@ -13,6 +14,7 @@ function endpoint(baseUrl: string) {
 export interface DeepSeekCallOptions {
   timeoutMs?: number;
   thinking?: "enabled" | "disabled";
+  retries?: number;
   fetchImplementation?: typeof fetch;
 }
 
@@ -24,32 +26,39 @@ export interface DeepSeekMessage {
 export async function callDeepSeekMessagesJson<T>(messages: DeepSeekMessage[], schema: z.ZodType<T>, options: DeepSeekCallOptions = {}): Promise<T> {
   const config = readModelConfig();
   if (!config.deepseekApiKey) throw new Error("DeepSeek 尚未配置");
-  const timeoutMs = options.timeoutMs ?? 12_000;
+  const timeoutMs = options.timeoutMs ?? agentCapabilities.model.defaultTimeoutMs;
   const thinking = options.thinking ?? "disabled";
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await (options.fetchImplementation ?? fetch)(endpoint(config.deepseekBaseUrl), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.deepseekApiKey}` },
-      body: JSON.stringify({
-        model: config.deepseekModel,
-        messages,
-        thinking: { type: thinking },
-        response_format: { type: "json_object" },
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`DeepSeek 返回 ${response.status}`);
-    const message = completionSchema.parse(await response.json()).choices[0].message;
-    const content = message.content ?? message.reasoning_content;
-    if (!content) throw new Error("DeepSeek 未返回可解析内容");
-    const normalized = content.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
-    return schema.parse(JSON.parse(normalized));
-  } finally {
-    clearTimeout(timeout);
+  const retries = Math.max(0, Math.min(options.retries ?? 1, 2));
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await (options.fetchImplementation ?? fetch)(endpoint(config.deepseekBaseUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.deepseekApiKey}` },
+        body: JSON.stringify({
+          model: config.deepseekModel,
+          messages,
+          thinking: { type: thinking },
+          response_format: { type: "json_object" },
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`DeepSeek 返回 ${response.status}`);
+      const message = completionSchema.parse(await response.json()).choices[0].message;
+      const content = message.content ?? message.reasoning_content;
+      if (!content) throw new Error("DeepSeek 未返回可解析内容");
+      const normalized = content.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+      return schema.parse(JSON.parse(normalized));
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw lastError instanceof Error ? lastError : new Error("DeepSeek 调用失败");
 }
 
 export async function callDeepSeekJson<T>(system: string, user: string, schema: z.ZodType<T>, options: DeepSeekCallOptions = {}): Promise<T> {

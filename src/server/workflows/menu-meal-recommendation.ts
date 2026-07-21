@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import {
   menuCandidateSchema,
   menuMealRecommendationInputSchema,
@@ -216,12 +217,10 @@ export async function runMenuMealRecommendation(
     }),
   });
   if (candidates.length === 0) return emptyResponse("NO_MENU_CONTENT");
-  if (candidates.length < 2) return emptyResponse("INSUFFICIENT_MENU_CONTENT");
-
   const contextStartedAt = performance.now();
   const financial = dependencies.getFinancialContext({ queryDate }, dependencies.store);
   if (!financial.success) return { success: false, runId, error: financial.error };
-  const recent = dependencies.getRecentMealConsumption({ queryDate, recentCount: 3 }, dependencies.store);
+  const recent = dependencies.getRecentMealConsumption({ queryDate, recentCount: agentCapabilities.mealRecommendations.recentMealCount }, dependencies.store);
   if (!recent.success) return { success: false, runId, error: recent.error };
   let settings: SettingsInput;
   try {
@@ -238,7 +237,9 @@ export async function runMenuMealRecommendation(
         quickTags: interpreted.quickTags,
         preferredTerms: interpreted.preferredTerms,
         avoidedTerms: interpreted.avoidedTerms,
+        strictAvoidedTerms: interpreted.strictAvoidedTerms,
         ...(interpreted.hardPriceLimitCents ? { hardPriceLimitCents: interpreted.hardPriceLimitCents } : {}),
+        ...(interpreted.targetPriceCents ? { targetPriceCents: interpreted.targetPriceCents } : {}),
       };
     } catch { /* Keep menu recommendation available without the LLM. */ }
   }
@@ -256,20 +257,23 @@ export async function runMenuMealRecommendation(
     recentMealContext: recent.data,
     longTermPreferences: {
       foodLikes: unique([...settings.foodLikes, ...naturalRequest.preferredTerms]),
-      foodDislikes: settings.foodDislikes,
-      strictAvoidances: unique([...settings.foodAllergens, ...naturalRequest.avoidedTerms]),
+      foodDislikes: unique([...settings.foodDislikes, ...naturalRequest.avoidedTerms]),
+      strictAvoidances: unique([...settings.foodAllergens, ...naturalRequest.strictAvoidedTerms]),
       ...(settings.defaultLocation ? { defaultLocation: settings.defaultLocation } : {}),
     },
     temporaryPreferences: {
       mealPeriod,
-      hardPriceLimitCents: Math.min(financial.data.lunchHardLimitCents, naturalRequest.hardPriceLimitCents ?? financial.data.lunchHardLimitCents),
+      referencePriceLimitCents: financial.data.lunchHardLimitCents,
+      ...(naturalRequest.hardPriceLimitCents ? { hardPriceLimitCents: naturalRequest.hardPriceLimitCents } : {}),
+      ...(naturalRequest.targetPriceCents ? { targetPriceCents: naturalRequest.targetPriceCents } : {}),
       quickTags,
       ...(settings.defaultLocation ? { location: settings.defaultLocation } : {}),
     },
+    maxRecommendations: parsed.data.maxRecommendations,
   });
   if (!ranked.success) return { success: false, runId, error: ranked.error };
   const byId = new Map(pricedCandidates.map((candidate) => [candidate.id, candidate]));
-  const recommendations = ranked.data.recommendations.slice(0, 4).flatMap((ranking): MealRecommendationCard[] => {
+  const recommendations = ranked.data.recommendations.slice(0, parsed.data.maxRecommendations).flatMap((ranking): MealRecommendationCard[] => {
     const candidate = byId.get(ranking.candidateId);
     if (!candidate) return [];
     let budgetImpact: ReturnType<typeof simulateBudgetImpact>;

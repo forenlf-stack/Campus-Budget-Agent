@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealPeriods } from "@/lib/meal-candidates";
 
 export const mealRecommendationQuickTags = ["SAVE_MONEY", "TRY_DIFFERENT", "LIGHT", "SPICY", "STAY_NEAR"] as const;
@@ -22,6 +23,9 @@ export const mealRecommendationRiskLabels: Record<string, string> = {
   RECENTLY_EATEN: "最近吃过，变化较少",
   MATCHES_FOOD_DISLIKES: "包含不喜欢的口味",
   INGREDIENT_INFO_UNKNOWN: "食材信息不完整",
+  ABOVE_PREFERRED_PRICE_RANGE: "高于平时设置的正餐参考上限",
+  MEAL_PERIOD_MISMATCH: "不是当前时段的常规选择",
+  LOCATION_MISMATCH: "距离默认地点可能较远",
 };
 
 export function mealRecommendationReasonLabel(reason: string): string {
@@ -35,7 +39,9 @@ export function mealRecommendationRiskLabel(risk: string): string {
 export const directMealRecommendationInputSchema = z.object({
   quickTags: z.array(z.enum(mealRecommendationQuickTags)).max(mealRecommendationQuickTags.length).default([]),
   excludeCandidateIds: z.array(z.string().trim().min(1).max(100)).max(50).default([]),
-  userRequest: z.string().trim().max(300).default(""),
+  userRequest: z.string().trim().max(agentCapabilities.languageUnderstanding.maximumRequestCharacters).default(""),
+  maxRecommendations: z.number().int().min(1).max(agentCapabilities.mealRecommendations.maximumCount)
+    .default(agentCapabilities.mealRecommendations.defaultCount),
   skipAgentInterpretation: z.boolean().default(false),
 }).strict();
 
@@ -73,7 +79,7 @@ export const directMealRecommendationResponseSchema = z.object({
   status: z.enum(["READY", "NO_RECOMMENDATIONS"]),
   mealPeriod: z.enum(mealPeriods),
   location: z.string().optional(),
-  recommendations: z.array(mealRecommendationCardSchema).max(4),
+  recommendations: z.array(mealRecommendationCardSchema).max(agentCapabilities.mealRecommendations.maximumCount),
   agentResponse: z.object({
     understanding: z.string(),
     response: z.string(),

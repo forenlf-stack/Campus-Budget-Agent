@@ -14,7 +14,7 @@ export function createSkillReadStore(userId: string) {
   function readPeriodTransactions(start: Date, end: Date): BudgetTransaction[] {
     const database = openDatabase();
     try {
-      const rows = database.prepare(`SELECT "id", "type", "category", "amountCents", "occurredAt", "isFixedExpense" FROM "Transaction" WHERE "userId" = ? AND "occurredAt" >= ? AND "occurredAt" < ? ORDER BY "occurredAt" DESC`).all(userId, start.toISOString(), end.toISOString()) as unknown as TransactionRow[];
+      const rows = database.prepare(`SELECT "id", "type", "category", "amountCents", "occurredAt", "isFixedExpense" FROM "Transaction" WHERE "userId" = ? AND "occurredAt" >= ? AND "occurredAt" < ? AND "deletedAt" IS NULL ORDER BY "occurredAt" DESC`).all(userId, start.toISOString(), end.toISOString()) as unknown as TransactionRow[];
       return rows.map((row) => ({ ...row, occurredAt: new Date(row.occurredAt), isFixedExpense: Boolean(row.isFixedExpense) }));
     } finally { database.close(); }
   }
@@ -23,15 +23,16 @@ export function createSkillReadStore(userId: string) {
     if (!category) return [];
     const database = openDatabase();
     try {
-      const rows = database.prepare(`SELECT "id", "type", "category", "amountCents", "occurredAt", "isFixedExpense", "itemName", "merchant" FROM "Transaction" WHERE "userId" = ? AND "category" = ? AND "occurredAt" >= ? AND "occurredAt" <= ? ORDER BY "occurredAt" DESC, "createdAt" DESC`).all(userId, category, start.toISOString(), end.toISOString()) as unknown as TransactionRow[];
+      const rows = database.prepare(`SELECT "id", "type", "category", "amountCents", "occurredAt", "isFixedExpense", "itemName", "merchant" FROM "Transaction" WHERE "userId" = ? AND "category" = ? AND "occurredAt" >= ? AND "occurredAt" <= ? AND "deletedAt" IS NULL ORDER BY "occurredAt" DESC, "createdAt" DESC`).all(userId, category, start.toISOString(), end.toISOString()) as unknown as TransactionRow[];
       return rows.map((row) => ({ ...row, occurredAt: new Date(row.occurredAt), isFixedExpense: Boolean(row.isFixedExpense) }));
     } finally { database.close(); }
   }
-  function readMealCandidates(filters: { mealPeriod: string; location?: string; maximumPriceCents?: number; enabledOnly: boolean }): MealCandidateRecord[] {
+  function readMealCandidates(filters: { mealPeriod?: string; location?: string; maximumPriceCents?: number; enabledOnly: boolean }): MealCandidateRecord[] {
     const database = openDatabase();
     try {
-      const where = [`"userId" = ?`, `("mealPeriod" = ? OR "mealPeriod" = 'ALL_DAY')`];
-      const parameters: Array<string | number> = [userId, filters.mealPeriod];
+      const where = [`"userId" = ?`];
+      const parameters: Array<string | number> = [userId];
+      if (filters.mealPeriod) { where.push(`("mealPeriod" = ? OR "mealPeriod" = 'ALL_DAY')`); parameters.push(filters.mealPeriod); }
       if (filters.location) { where.push(`"location" = ?`); parameters.push(filters.location); }
       if (filters.maximumPriceCents !== undefined) { where.push(`"typicalPriceCents" <= ?`); parameters.push(filters.maximumPriceCents); }
       if (filters.enabledOnly) where.push(`"enabled" = 1`);

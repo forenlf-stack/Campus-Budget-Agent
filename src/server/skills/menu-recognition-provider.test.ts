@@ -70,7 +70,7 @@ describe("FetchMenuRecognitionProvider", () => {
     });
   });
 
-  it("将过大的Provider超时配置限制为15秒", async () => {
+  it("将Provider超时配置限制为最多60秒", async () => {
     vi.useFakeTimers();
     try {
       const fetchImplementation = vi.fn<typeof fetch>((_input, init) => new Promise<Response>((_resolve, reject) => {
@@ -83,7 +83,7 @@ describe("FetchMenuRecognitionProvider", () => {
       });
       const recognition = provider.recognize({ image: "private-image-data", mimeType: "image/png" });
       const rejection = expect(recognition).rejects.toMatchObject({ code: "MENU_RECOGNITION_TIMEOUT" });
-      await vi.advanceTimersByTimeAsync(14_999);
+      await vi.advanceTimersByTimeAsync(59_999);
       expect(fetchImplementation.mock.calls[0][1]?.signal?.aborted).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       await rejection;

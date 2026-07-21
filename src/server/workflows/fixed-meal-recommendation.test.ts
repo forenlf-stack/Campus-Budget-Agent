@@ -47,12 +47,12 @@ describe("fixed meal recommendation workflow", () => {
     expect(result.data.executionSteps.map((step) => step.step)).toEqual(["get_financial_context", "get_recent_meal_consumption", "retrieve_history_meals", "rank_meal_candidates", "simulate_budget_impact"]);
   });
 
-  it("最多返回4条不同候选并覆盖推荐方向", () => {
+  it("默认最多返回6条不同候选并优先覆盖推荐方向", () => {
     const result = run([candidate("a"), candidate("b"), candidate("c"), candidate("d"), candidate("e")]);
     if (!result.success) throw new Error(result.error.message);
-    expect(result.data.recommendations).toHaveLength(4);
-    expect(new Set(result.data.recommendations.map((item) => item.candidate.id)).size).toBe(4);
-    expect(result.data.recommendations.map((item) => item.ranking.recommendationType)).toEqual(["OVERALL", "SAVE_MONEY", "TASTE", "NEW_OR_CONVENIENT"]);
+    expect(result.data.recommendations).toHaveLength(5);
+    expect(new Set(result.data.recommendations.map((item) => item.candidate.id)).size).toBe(5);
+    expect(result.data.recommendations.slice(0, 4).map((item) => item.ranking.recommendationType)).toEqual(["OVERALL", "SAVE_MONEY", "TASTE", "NEW_OR_CONVENIENT"]);
   });
 
   it("严格忌口候选被排除", () => {
@@ -60,19 +60,24 @@ describe("fixed meal recommendation workflow", () => {
     expect(result.success && result.data.recommendations.map((item) => item.candidate.id)).not.toContain("unsafe");
   });
 
-  it("全超硬价格上限时返回空结果", () => {
+  it("超过设置参考价仍保留并明确提示风险", () => {
     const result = run([candidate("costly", { typicalPriceCents: 2_501 })]);
+    expect(result).toMatchObject({ success: true, data: { status: "READY", recommendations: [{ ranking: { risks: expect.arrayContaining(["ABOVE_PREFERRED_PRICE_RANGE"]) } }] } });
+  });
+
+  it("用户明确价格上限时仍严格过滤", () => {
+    const result = run([candidate("costly", { typicalPriceCents: 2_501 })], { userRequest: "最多25元" });
     expect(result).toMatchObject({ success: true, data: { status: "NO_RECOMMENDATIONS", recommendations: [] } });
   });
 
   it("换批优先排除上一批候选", () => {
-    const candidates = [candidate("a"), candidate("b"), candidate("c"), candidate("d"), candidate("e")];
+    const candidates = [candidate("a"), candidate("b"), candidate("c"), candidate("d"), candidate("e"), candidate("f"), candidate("g"), candidate("h")];
     const first = run(candidates);
     if (!first.success) throw new Error(first.error.message);
     const excluded = first.data.recommendations.map((item) => item.candidate.id);
     const second = run(candidates, { excludeCandidateIds: excluded });
     if (!second.success) throw new Error(second.error.message);
-    expect(second.data.recommendations.map((item) => item.candidate.id)).toEqual(["e"]);
+    expect(second.data.recommendations.map((item) => item.candidate.id)).toEqual(["g", "h"]);
   });
 
   it("全部排除时轮转回退且不原样重复整批", () => {
@@ -85,14 +90,14 @@ describe("fixed meal recommendation workflow", () => {
   it("默认使用地点做便利评分，但不限制历史候选检索", () => {
     let filters: unknown;
     const result = runFixedMealRecommendation({ date }, { store: store([candidate("near"), candidate("far", { location: "西校区" })], { readMealCandidates: (received) => { filters = received; return [candidate("near"), candidate("far", { location: "西校区" })]; } }), createRunId: () => "run" });
-    expect(filters).toEqual({ mealPeriod: "LUNCH", maximumPriceCents: 2_500, enabledOnly: true });
+    expect(filters).toEqual({ enabledOnly: true });
     expect(result.success && result.data.recommendations.map((item) => item.candidate.id)).toContain("far");
   });
 
-  it("STAY_NEAR只检索默认地点", () => {
+  it("STAY_NEAR作为排序偏好而不在检索阶段删除远处候选", () => {
     let filters: unknown;
     runFixedMealRecommendation({ date, quickTags: ["STAY_NEAR"] }, { store: store([], { readMealCandidates: (received) => { filters = received; return []; } }), createRunId: () => "run" });
-    expect(filters).toEqual({ mealPeriod: "LUNCH", location: "东校区", maximumPriceCents: 2_500, enabledOnly: true });
+    expect(filters).toEqual({ enabledOnly: true });
   });
 
   it("非法公开输入返回INVALID_INPUT", () => {

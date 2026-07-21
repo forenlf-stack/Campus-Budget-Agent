@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { billAnalysisResponseSchema } from "@/lib/bill-analysis";
 import type { BillAnalysisResponse } from "@/lib/bill-analysis";
 import { centsToYuan, signedCentsToYuan } from "@/lib/money";
@@ -62,7 +63,7 @@ export async function GET() {
 overview 用一段自然中文总结；observations 提供3到6条有数据依据的观察；suggestions 提供2到5条温和建议；toneNote 用一句话说明建议的边界。只返回JSON。`,
         JSON.stringify({ generatedAt: now.toISOString(), facts: agentFacts }),
         agentSchema,
-        { timeoutMs: 25_000, thinking: "disabled" },
+        { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },
       );
       agent = { ...response, source: "LLM" as const };
     } catch (error) {

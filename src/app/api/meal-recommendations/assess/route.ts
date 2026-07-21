@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealPlanAssessmentInputSchema, mealPlanAssessmentResponseSchema } from "@/lib/meal-plan-assessment";
 import { centsToYuan } from "@/lib/money";
 import { callDeepSeekJson } from "@/server/llm/deepseek-client";
@@ -12,7 +13,7 @@ import { simulateBudgetImpact } from "@/server/skills/simulate-budget-impact";
 
 export const runtime = "nodejs";
 
-const copySchema = z.object({ reply: z.string().trim().min(1).max(800) }).passthrough();
+const copySchema = z.object({ reply: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters) }).passthrough();
 
 const chineseDigits: Record<string, number> = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
 
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest) {
     if (!priceCents) return NextResponse.json({ error: { code: "PRICE_REQUIRED", message: "请在描述中提供这顿饭的总价，例如“总共31元”" } }, { status: 400 });
     const now = new Date();
     const financial = getFinancialContext({ queryDate: now }, store);
-    const recent = getRecentMealConsumption({ queryDate: now, days: 7, recentCount: 3 }, store);
+    const recent = getRecentMealConsumption({ queryDate: now, days: 14, recentCount: agentCapabilities.mealRecommendations.recentMealCount }, store);
     if (!financial.success) throw new Error(financial.error.message);
     if (!recent.success) throw new Error(recent.error.message);
     const impact = simulateBudgetImpact({ candidatePriceCents: priceCents, financialContext: financial.data });
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
         "你是餐食方案评价 Agent。用户已经给出了想吃的具体方案和总价，不要另行推荐历史候选。根据可信事实评价口味结构、价格是否合适，并给出肯定、适度调整或再想想的建议。可以讨论荤素搭配、油辣程度和分量，但不得断言用户未提供的具体配料或营养数据，不得修改任何金额和等级。回复2到4句自然中文，只返回JSON，字段为reply。",
         JSON.stringify(facts),
         copySchema,
-        { timeoutMs: 15_000, thinking: "disabled" },
+        { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },
       );
       reply = copy.reply; source = "LLM";
     } catch (error) { fallbackReason = error instanceof Error ? error.message : "模型响应不可用"; }

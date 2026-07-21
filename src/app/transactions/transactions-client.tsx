@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { HomeLink } from "@/app/components/home-link";
 import { transactionCategories, transactionTypes, type TransactionCategory, type TransactionType } from "@/lib/budget";
@@ -8,6 +8,7 @@ import { centsToYuan, signedCentsToYuan, yuanToCents } from "@/lib/money";
 import { categoryLabels } from "@/lib/settings";
 import { groupTransactions, type TransactionGroup, type TransactionGroupKey, type TransactionGroupSort } from "@/lib/transaction-grouping";
 import type { TransactionInput } from "@/lib/transactions";
+import { LedgerToolsPanel, type AccountRecord } from "./ledger-tools-panel";
 
 interface RecordItem {
   id: string;
@@ -20,6 +21,10 @@ interface RecordItem {
   note: string | null;
   isFixedExpense: boolean;
   originalTransactionId: string | null;
+  accountId: string | null;
+  rawMerchant: string | null;
+  rawItemName: string | null;
+  rawReference: string | null;
 }
 
 function signedYuan(cents: number) {
@@ -31,7 +36,7 @@ interface RefundableExpense { id: string; itemName: string; merchant: string | n
 interface Payload {
   transactions: RecordItem[];
   refundableExpenses: RefundableExpense[];
-  budget: { plannedVariableBudgetCents: number; netVariableSpendingCents: number; remainingBudgetCents: number; categories: Array<{ category: TransactionCategory; spentCents: number; refundedCents: number; netSpendingCents: number; remainingCents: number }> };
+  budget: { currentBalanceCents: number; plannedVariableBudgetCents: number; netVariableSpendingCents: number; remainingBudgetCents: number; forecast: { dailyAvailableCents: number; projectedMonthEndSpendingCents: number; projectedRemainingCents: number; remainingDays: number; status: "ON_TRACK" | "WARNING" | "OVER_BUDGET" }; categories: Array<{ category: TransactionCategory; spentCents: number; refundedCents: number; netSpendingCents: number; remainingCents: number }> };
 }
 
 interface FormState {
@@ -44,6 +49,8 @@ interface FormState {
   note: string;
   isFixedExpense: boolean;
   originalTransactionId: string;
+  accountId: string;
+  rememberRule: boolean;
 }
 
 const typeLabels: Record<TransactionType, string> = { INCOME: "收入", EXPENSE: "支出", REFUND: "退款" };
@@ -81,7 +88,7 @@ function localDateTime(iso = new Date().toISOString()) {
 }
 
 function emptyForm(): FormState {
-  return { type: "EXPENSE", amount: "", category: "MEAL", itemName: "", merchant: "", occurredAt: localDateTime(), note: "", isFixedExpense: false, originalTransactionId: "" };
+  return { type: "EXPENSE", amount: "", category: "MEAL", itemName: "", merchant: "", occurredAt: localDateTime(), note: "", isFixedExpense: false, originalTransactionId: "", accountId: "", rememberRule: false };
 }
 
 function toInput(form: FormState): TransactionInput {
@@ -95,6 +102,8 @@ function toInput(form: FormState): TransactionInput {
     note: form.note,
     isFixedExpense: form.type === "INCOME" ? false : form.isFixedExpense,
     originalTransactionId: form.type === "REFUND" ? form.originalTransactionId || null : null,
+    accountId: form.accountId || null,
+    rememberRule: form.rememberRule,
   };
 }
 
@@ -105,7 +114,7 @@ async function requestJson(url: string, init?: RequestInit) {
   return payload.data;
 }
 
-function TransactionForm({ form, setForm, refundableExpenses, onSubmit, onCancel, saving, editing }: { form: FormState; setForm: (form: FormState) => void; refundableExpenses: RefundableExpense[]; onSubmit: () => void; onCancel: () => void; saving: boolean; editing: boolean }) {
+function TransactionForm({ form, setForm, refundableExpenses, accounts, onSubmit, onCancel, saving, editing }: { form: FormState; setForm: (form: FormState) => void; refundableExpenses: RefundableExpense[]; accounts: AccountRecord[]; onSubmit: () => void; onCancel: () => void; saving: boolean; editing: boolean }) {
   const inputClass = "rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100";
   const selectedOriginal = refundableExpenses.find((item) => item.id === form.originalTransactionId);
   const matchingRefundableExpenses = refundableExpenses.filter((item) => !form.category || item.category === form.category);
@@ -119,21 +128,24 @@ function TransactionForm({ form, setForm, refundableExpenses, onSubmit, onCancel
         {form.type === "REFUND" && <label className="grid gap-1.5 text-sm">原支出<select className={inputClass} value={form.originalTransactionId} onChange={(event) => { const original = refundableExpenses.find((item) => item.id === event.target.value); setForm({ ...form, originalTransactionId: event.target.value, category: original?.category ?? form.category, amount: original ? centsToYuan(original.refundableCents) : form.amount, itemName: original ? `${original.itemName}退款` : form.itemName, merchant: original?.merchant ?? form.merchant, isFixedExpense: Boolean(original?.isFixedExpense) }); }}><option value="">请选择{form.category ? `属于${categoryLabels[form.category]}` : ""}的支出</option>{matchingRefundableExpenses.map((item) => <option key={item.id} value={item.id}>{item.itemName}（可退 ¥{centsToYuan(item.refundableCents)}）</option>)}</select></label>}
         <label className="grid gap-1.5 text-sm">商品或项目名称<input className={inputClass} value={form.itemName} onChange={(event) => setForm({ ...form, itemName: event.target.value })} /></label>
         <label className="grid gap-1.5 text-sm">商家<input className={inputClass} value={form.merchant} onChange={(event) => setForm({ ...form, merchant: event.target.value })} /></label>
+        <label className="grid gap-1.5 text-sm">资金账户<select className={inputClass} value={form.accountId} onChange={(event) => setForm({ ...form, accountId: event.target.value })}><option value="">未指定（历史账目）</option>{accounts.filter((item) => item.enabled).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label className="grid gap-1.5 text-sm">发生时间<input className={inputClass} type="datetime-local" value={form.occurredAt} onChange={(event) => setForm({ ...form, occurredAt: event.target.value })} /></label>
         <label className="grid gap-1.5 text-sm sm:col-span-2">备注<input className={inputClass} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
       </div>
-      {form.type !== "INCOME" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isFixedExpense} disabled={form.type === "REFUND" && Boolean(selectedOriginal)} onChange={(event) => setForm({ ...form, isFixedExpense: event.target.checked })} />是否为固定支出</label>}
+      <div className="flex flex-wrap gap-5">{form.type !== "INCOME" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isFixedExpense} disabled={form.type === "REFUND" && Boolean(selectedOriginal)} onChange={(event) => setForm({ ...form, isFixedExpense: event.target.checked })} />是否为固定支出</label>}{form.type !== "INCOME" && form.merchant.trim() && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.rememberRule} onChange={(event) => setForm({ ...form, rememberRule: event.target.checked })} />记住“商家 → 分类”，以后自动套用</label>}</div>
       <button type="button" disabled={saving} onClick={onSubmit} className="justify-self-start rounded-xl bg-teal-700 px-5 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">{saving ? "保存中…" : editing ? "保存修改" : "添加记录"}</button>
     </div>
   );
 }
 
-function TransactionGroupCard({ group, sort, totalNetCents, onSortChange, onEdit, onDelete }: {
+function TransactionGroupCard({ group, sort, totalNetCents, accounts, onSortChange, onEdit, onCopy, onDelete }: {
   group: TransactionGroup<RecordItem>;
   sort: TransactionGroupSort;
   totalNetCents: number;
+  accounts: AccountRecord[];
   onSortChange: (sort: TransactionGroupSort) => void;
   onEdit: (item: RecordItem) => void;
+  onCopy: (item: RecordItem) => void;
   onDelete: (id: string) => void;
 }) {
   const label = groupLabel(group.key);
@@ -144,6 +156,10 @@ function TransactionGroupCard({ group, sort, totalNetCents, onSortChange, onEdit
     EXPENSE: "bg-amber-50 text-amber-700",
     REFUND: "bg-blue-50 text-blue-700",
   };
+  const refundedByOriginal = new Map<string, number>();
+  for (const item of group.items) {
+    if (item.type === "REFUND" && item.originalTransactionId) refundedByOriginal.set(item.originalTransactionId, (refundedByOriginal.get(item.originalTransactionId) ?? 0) + item.amountCents);
+  }
 
   return (
     <section id={`group-${group.key.toLowerCase()}`} className="surface-card scroll-mt-6 overflow-hidden rounded-3xl">
@@ -205,26 +221,32 @@ function TransactionGroupCard({ group, sort, totalNetCents, onSortChange, onEdit
       </div>
 
       <div className="divide-y divide-slate-100">
-        {group.items.map((item) => (
-          <article key={item.id} className="grid gap-3 px-4 py-4 transition-colors hover:bg-slate-50/80 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-6">
+        {group.items.map((item) => {
+          const linkedRefundCents = item.type === "EXPENSE" ? refundedByOriginal.get(item.id) ?? 0 : 0;
+          return <article key={item.id} className="grid gap-3 px-4 py-4 transition-colors hover:bg-slate-50/80 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-6">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${typeTone[item.type]}`}>{typeLabels[item.type]}</span>
                 {item.isFixedExpense && <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-700">固定支出</span>}
+                {linkedRefundCents > 0 && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">已退款 ¥{centsToYuan(linkedRefundCents)}</span>}
+                {item.type === "REFUND" && item.originalTransactionId && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">已关联原支出</span>}
                 <time className="text-xs text-slate-400" dateTime={item.occurredAt}>{new Date(item.occurredAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>
+                {item.accountId && <span className="text-xs font-semibold text-slate-500">{accounts.find((account) => account.id === item.accountId)?.name ?? "已停用账户"}</span>}
               </div>
               <h3 className="mt-2 truncate font-bold text-slate-900">{item.itemName}</h3>
               <p className="mt-1 truncate text-xs text-slate-500">{item.merchant || "未填写商家"}{item.note ? ` · ${item.note}` : ""}</p>
+              {(item.rawMerchant || item.rawItemName || item.rawReference) && <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-semibold text-indigo-700">查看原始流水证据</summary><p className="mt-1 break-all rounded-lg bg-slate-50 p-2">{[item.rawMerchant, item.rawItemName, item.rawReference].filter(Boolean).join(" · ")}</p></details>}
             </div>
             <div className="flex items-center justify-between gap-4 sm:justify-end">
-              <p className={`whitespace-nowrap text-lg font-black ${item.type === "EXPENSE" ? "text-slate-950" : "text-teal-700"}`}>{item.type === "EXPENSE" ? "−" : "+"}¥{centsToYuan(item.amountCents)}</p>
+              <div className="text-right"><p className={`whitespace-nowrap text-lg font-black ${item.type === "EXPENSE" ? "text-slate-950" : "text-teal-700"}`}>{item.type === "EXPENSE" ? "−" : "+"}¥{centsToYuan(item.amountCents)}</p>{linkedRefundCents > 0 && <p className="mt-0.5 text-[11px] font-semibold text-slate-500">退款后净支出 ¥{centsToYuan(Math.max(item.amountCents - linkedRefundCents, 0))}</p>}</div>
               <div className="flex items-center gap-1">
+                {item.type !== "REFUND" && <button type="button" onClick={() => onCopy(item)} className="rounded-lg px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">复制</button>}
                 <button type="button" onClick={() => onEdit(item)} className="rounded-lg px-3 py-2 text-sm font-semibold text-teal-700 hover:bg-teal-50">编辑</button>
                 <button type="button" onClick={() => onDelete(item.id)} className="rounded-lg px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">删除</button>
               </div>
             </div>
-          </article>
-        ))}
+          </article>;
+        })}
       </div>
     </section>
   );
@@ -235,9 +257,11 @@ export function TransactionsClient() {
   const [category, setCategory] = useState("");
   const [type, setType] = useState("");
   const [data, setData] = useState<Payload | null>(null);
+  const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [lastDeletedId, setLastDeletedId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -247,8 +271,11 @@ export function TransactionsClient() {
   const query = useMemo(() => new URLSearchParams({ period, ...(category ? { category } : {}), ...(type ? { type } : {}) }).toString(), [period, category, type]);
   const groupedTransactions = useMemo(() => groupTransactions(data?.transactions ?? [], sortByGroup), [data?.transactions, sortByGroup]);
   const totalGroupedNetCents = useMemo(() => groupedTransactions.reduce((total, group) => group.key === "INCOME" ? total : total + Math.max(group.netCents, 0), 0), [groupedTransactions]);
-  async function load() { setLoading(true); setError(""); try { setData(await requestJson(`/api/transactions?${query}`)); } catch (caught) { setError(caught instanceof Error ? caught.message : "加载失败"); } finally { setLoading(false); } }
+  const recentTemplates = useMemo(() => { const seen = new Set<string>(); return (data?.transactions ?? []).filter((item) => item.type === "EXPENSE").filter((item) => { const key = `${item.itemName}|${item.merchant}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 6); }, [data?.transactions]);
+  const load = useCallback(async () => { setLoading(true); setError(""); try { setData(await requestJson(`/api/transactions?${query}`)); } catch (caught) { setError(caught instanceof Error ? caught.message : "加载失败"); } finally { setLoading(false); } }, [query]);
+  const loadAccounts = useCallback(async () => { try { const next = await requestJson("/api/accounts"); setAccounts(next); setForm((current) => current.accountId ? current : { ...current, accountId: next.find((item: AccountRecord) => item.isDefault)?.id ?? "" }); } catch (caught) { setError(caught instanceof Error ? caught.message : "账户加载失败"); } }, []);
   useEffect(() => { let active = true; void requestJson(`/api/transactions?${query}`).then((result) => { if (active) { setData(result); setError(""); setLoading(false); } }).catch((caught: unknown) => { if (active) { setError(caught instanceof Error ? caught.message : "加载失败"); setLoading(false); } }); return () => { active = false; }; }, [query]);
+  useEffect(() => { let active = true; void requestJson("/api/accounts").then((next) => { if (active) { setAccounts(next); setForm((current) => current.accountId ? current : { ...current, accountId: next.find((item: AccountRecord) => item.isDefault)?.id ?? "" }); } }).catch((caught: unknown) => { if (active) setError(caught instanceof Error ? caught.message : "账户加载失败"); }); return () => { active = false; }; }, []);
 
   async function save() {
     setSaving(true); setError(""); setMessage("");
@@ -257,19 +284,22 @@ export function TransactionsClient() {
       if (form.type === "REFUND" && !form.originalTransactionId) throw new Error("请选择要退款的原支出");
       const input = toInput(form);
       await requestJson(editingId ? `/api/transactions/${editingId}` : "/api/transactions", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
-      setForm(emptyForm()); setEditingId(null); setMessage(editingId ? "记录已更新，预算已重新计算。" : "记录已添加，预算已重新计算。"); await load();
+      setForm({ ...emptyForm(), accountId: accounts.find((item) => item.isDefault)?.id ?? "" }); setEditingId(null); setMessage(editingId ? "记录已更新，预算已重新计算。" : "记录已添加，预算已重新计算。"); await load(); await loadAccounts();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "保存失败"); } finally { setSaving(false); }
   }
 
-  function edit(item: RecordItem) { setEditingId(item.id); setForm({ type: item.type, amount: centsToYuan(item.amountCents), category: item.category ?? "", itemName: item.itemName, merchant: item.merchant ?? "", occurredAt: localDateTime(item.occurredAt), note: item.note ?? "", isFixedExpense: item.isFixedExpense, originalTransactionId: item.originalTransactionId ?? "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }
-  async function remove() { if (!deleteId) return; try { await requestJson(`/api/transactions/${deleteId}`, { method: "DELETE" }); setDeleteId(null); setMessage("记录已删除，预算已重新计算。"); await load(); } catch (caught) { setError(caught instanceof Error ? caught.message : "删除失败"); setDeleteId(null); } }
+  function edit(item: RecordItem) { setEditingId(item.id); setForm({ type: item.type, amount: centsToYuan(item.amountCents), category: item.category ?? "", itemName: item.itemName, merchant: item.merchant ?? "", occurredAt: localDateTime(item.occurredAt), note: item.note ?? "", isFixedExpense: item.isFixedExpense, originalTransactionId: item.originalTransactionId ?? "", accountId: item.accountId ?? "", rememberRule: false }); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  function copy(item: RecordItem) { setEditingId(null); setForm({ type: item.type, amount: centsToYuan(item.amountCents), category: item.category ?? "", itemName: item.itemName, merchant: item.merchant ?? "", occurredAt: localDateTime(), note: item.note ?? "", isFixedExpense: item.isFixedExpense, originalTransactionId: "", accountId: item.accountId ?? accounts.find((account) => account.isDefault)?.id ?? "", rememberRule: false }); window.scrollTo({ top: 0, behavior: "smooth" }); setMessage("已复制为一笔新账目，请确认时间和金额后保存。"); }
+  async function remove() { if (!deleteId) return; try { const removedId = deleteId; await requestJson(`/api/transactions/${removedId}`, { method: "DELETE" }); setDeleteId(null); setLastDeletedId(removedId); setMessage("记录已移入回收站，预算已重新计算。"); await load(); await loadAccounts(); } catch (caught) { setError(caught instanceof Error ? caught.message : "删除失败"); setDeleteId(null); } }
+  async function undoDelete() { if (!lastDeletedId) return; try { await requestJson(`/api/transactions/${lastDeletedId}/restore`, { method: "POST" }); setLastDeletedId(null); setMessage("已恢复刚才删除的记录。"); await load(); await loadAccounts(); } catch (caught) { setError(caught instanceof Error ? caught.message : "恢复失败"); } }
 
   return (
     <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto grid max-w-6xl gap-6">
       <div><HomeLink /></div><header className="max-w-3xl py-2"><p className="page-kicker">分类账本</p><h1 className="page-heading mt-4 text-4xl">消费记录</h1><p className="mt-3 text-sm leading-7 text-slate-600">记录按消费类别聚合展示，优先看清钱花在了哪里；每个类别都可以使用自己的排序方式。</p></header>
-      <TransactionForm form={form} setForm={setForm} refundableExpenses={data?.refundableExpenses ?? []} onSubmit={() => void save()} onCancel={() => { setEditingId(null); setForm(emptyForm()); }} saving={saving} editing={Boolean(editingId)} />
-      {(error || message) && <div role="status" className={`rounded-xl border p-4 text-sm ${error ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{error || message}</div>}
-      {data && <div className="grid gap-4 sm:grid-cols-3"><div className="rounded-3xl bg-gradient-to-br from-slate-950 to-indigo-950 p-5 text-white shadow-lg shadow-indigo-950/10"><p className="text-xs text-slate-400">本月总消费预算</p><p className="mt-1 text-2xl font-black">¥{centsToYuan(data.budget.plannedVariableBudgetCents)}</p></div><div className="surface-card rounded-3xl p-5"><p className="text-xs text-slate-500">实际净支出</p><p className="mt-1 text-2xl font-black">{signedYuan(data.budget.netVariableSpendingCents)}</p></div><div className="surface-card rounded-3xl p-5"><p className="text-xs text-slate-500">总预算剩余</p><p className={`mt-1 text-2xl font-black ${data.budget.remainingBudgetCents < 0 ? "text-red-700" : "text-teal-700"}`}>{signedYuan(data.budget.remainingBudgetCents)}</p></div></div>}
+      {recentTemplates.length > 0 && <section className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-black text-indigo-900">快速记账</span>{recentTemplates.map((item) => <button key={item.id} type="button" onClick={() => copy(item)} className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-indigo-800 shadow-sm hover:-translate-y-0.5">{item.itemName} · ¥{centsToYuan(item.amountCents)}</button>)}</div></section>}
+      <TransactionForm form={form} setForm={setForm} refundableExpenses={data?.refundableExpenses ?? []} accounts={accounts} onSubmit={() => void save()} onCancel={() => { setEditingId(null); setForm({ ...emptyForm(), accountId: accounts.find((item) => item.isDefault)?.id ?? "" }); }} saving={saving} editing={Boolean(editingId)} />
+      {(error || message) && <div role="status" className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 text-sm ${error ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}><span>{error || message}</span>{!error && lastDeletedId && <button type="button" onClick={() => void undoDelete()} className="rounded-lg bg-emerald-800 px-3 py-1.5 font-bold text-white">撤销删除</button>}</div>}
+      {data && <><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><div className="rounded-3xl bg-gradient-to-br from-slate-950 to-indigo-950 p-5 text-white shadow-lg shadow-indigo-950/10"><p className="text-xs text-slate-400">本月总消费预算</p><p className="mt-1 text-2xl font-black">¥{centsToYuan(data.budget.plannedVariableBudgetCents)}</p></div><div className="surface-card rounded-3xl p-5"><p className="text-xs text-slate-500">实际净支出</p><p className="mt-1 text-2xl font-black">{signedYuan(data.budget.netVariableSpendingCents)}</p></div><div className="surface-card rounded-3xl p-5"><p className="text-xs text-slate-500">总预算剩余</p><p className={`mt-1 text-2xl font-black ${data.budget.remainingBudgetCents < 0 ? "text-red-700" : "text-teal-700"}`}>{signedYuan(data.budget.remainingBudgetCents)}</p></div><div className="surface-card rounded-3xl p-5"><p className="text-xs text-slate-500">每日可花 · 剩 {data.budget.forecast.remainingDays} 天</p><p className="mt-1 text-2xl font-black text-indigo-800">¥{centsToYuan(data.budget.forecast.dailyAvailableCents)}</p></div><div className={`rounded-3xl p-5 ${data.budget.forecast.status === "OVER_BUDGET" ? "bg-red-50 text-red-900" : data.budget.forecast.status === "WARNING" ? "bg-amber-50 text-amber-900" : "bg-teal-50 text-teal-900"}`}><p className="text-xs">月底预计支出</p><p className="mt-1 text-2xl font-black">¥{centsToYuan(data.budget.forecast.projectedMonthEndSpendingCents)}</p><p className="mt-1 text-xs font-semibold">{data.budget.forecast.status === "OVER_BUDGET" ? `预计超支 ¥${centsToYuan(Math.abs(data.budget.forecast.projectedRemainingCents))}` : `预计结余 ¥${centsToYuan(data.budget.forecast.projectedRemainingCents)}`}</p></div></div><LedgerToolsPanel accounts={accounts} onTransactionsChanged={load} /></>}
       <section className="surface-card rounded-3xl p-5 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -303,15 +333,17 @@ export function TransactionsClient() {
               group={group}
               sort={sortByGroup[group.key] ?? "AMOUNT_DESC"}
               totalNetCents={totalGroupedNetCents}
+              accounts={accounts}
               onSortChange={(sort) => setSortByGroup((current) => ({ ...current, [group.key]: sort }))}
               onEdit={edit}
+              onCopy={copy}
               onDelete={setDeleteId}
             />
           ))}
         </div>
       )}
     </div>
-    {deleteId && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-title"><div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"><h2 id="delete-title" className="text-lg font-semibold">确认删除记录？</h2><p className="mt-2 text-sm text-slate-600">删除后无法恢复，预算数据会立即重新计算。</p><div className="mt-6 flex justify-end gap-3"><button autoFocus onClick={() => setDeleteId(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">取消</button><button onClick={() => void remove()} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white">确认删除</button></div></div></div>}
+    {deleteId && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-title"><div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"><h2 id="delete-title" className="text-lg font-semibold">移入回收站？</h2><p className="mt-2 text-sm text-slate-600">记录会从预算中移除，保存后可立即撤销或从回收站恢复。</p><div className="mt-6 flex justify-end gap-3"><button autoFocus onClick={() => setDeleteId(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">取消</button><button onClick={() => void remove()} className="rounded-xl bg-red-700 px-4 py-2 text-sm font-semibold text-white">移入回收站</button></div></div></div>}
     </main>
   );
 }

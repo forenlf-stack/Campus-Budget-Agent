@@ -12,6 +12,11 @@ export const transactionInputSchema = z.object({
   note: z.string().trim().max(500),
   isFixedExpense: z.boolean(),
   originalTransactionId: z.string().min(1).nullable(),
+  accountId: z.string().min(1).nullable().optional(),
+  rawMerchant: z.string().trim().max(300).nullable().optional(),
+  rawItemName: z.string().trim().max(300).nullable().optional(),
+  rawReference: z.string().trim().max(1000).nullable().optional(),
+  rememberRule: z.boolean().optional(),
 }).superRefine((input, context) => {
   if (input.type === "INCOME") {
     if (input.category !== null) context.addIssue({ code: "custom", path: ["category"], message: "收入不能选择消费分类" });

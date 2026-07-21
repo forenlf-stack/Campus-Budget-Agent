@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealPeriods } from "@/lib/meal-candidates";
 import { mealRecommendationQuickTags, mealRecommendationTypes, type MealRecommendationQuickTag, type MealRecommendationType } from "@/lib/meal-recommendations";
 import { skillFailure, skillSuccess, type SkillResult } from "@/lib/skill-result";
@@ -50,9 +51,13 @@ export const rankMealCandidatesInputSchema = z.object({
   temporaryPreferences: z.object({
     mealPeriod: z.enum(mealPeriods),
     location: z.string().trim().min(1).optional(),
+    referencePriceLimitCents: positiveCents.optional(),
+    targetPriceCents: positiveCents.optional(),
     hardPriceLimitCents: positiveCents.optional(),
     quickTags: z.array(z.enum(mealQuickTags)).max(mealQuickTags.length).default([]),
   }),
+  maxRecommendations: z.number().int().min(1).max(agentCapabilities.mealRecommendations.maximumCount)
+    .default(agentCapabilities.mealRecommendations.defaultCount),
 });
 
 export interface RankedMealCandidate {
@@ -79,7 +84,7 @@ function normalized(values: string[]) {
 }
 
 function candidateTerms(candidate: RetrievedMealCandidate) {
-  return normalized([...candidate.tags, ...candidate.ingredients]);
+  return normalized([candidate.name, candidate.merchant, ...candidate.tags, ...candidate.ingredients]);
 }
 
 function preferenceMatches(candidate: RetrievedMealCandidate, preferences: string[]) {
@@ -92,7 +97,7 @@ function intersections(candidate: RetrievedMealCandidate, preferences: string[])
 }
 
 function containsAny(candidate: RetrievedMealCandidate, words: string[]) {
-  const text = [...candidate.tags, ...candidate.ingredients].join(" ").toLocaleLowerCase("zh-CN");
+  const text = [candidate.name, candidate.merchant, ...candidate.tags, ...candidate.ingredients].join(" ").toLocaleLowerCase("zh-CN");
   return words.some((word) => text.includes(word));
 }
 
@@ -117,14 +122,14 @@ export function rankMealCandidates(input: unknown): SkillResult<RankMealCandidat
   try {
     const parsed = rankMealCandidatesInputSchema.parse(input);
     const filtered: RankMealCandidatesData["filtered"] = [];
-    const hardLimit = Math.min(parsed.financialContext.lunchHardLimitCents, parsed.temporaryPreferences.hardPriceLimitCents ?? parsed.financialContext.lunchHardLimitCents);
+    const hardLimit = parsed.temporaryPreferences.hardPriceLimitCents;
+    const referenceLimit = parsed.temporaryPreferences.referencePriceLimitCents ?? parsed.financialContext.lunchHardLimitCents;
     const quickTags = new Set(parsed.temporaryPreferences.quickTags);
     const eligible = parsed.candidates.filter((candidate) => {
       const reasons: string[] = [];
       if (!candidate.enabled) reasons.push("DISABLED");
       if (preferenceMatches(candidate, parsed.longTermPreferences.strictAvoidances).length > 0) reasons.push("STRICT_AVOIDANCE_CONFLICT");
-      if (candidate.mealPeriod !== "ALL_DAY" && candidate.mealPeriod !== parsed.temporaryPreferences.mealPeriod) reasons.push("MEAL_PERIOD_MISMATCH");
-      if (candidate.typicalPriceCents > hardLimit) reasons.push("HARD_PRICE_LIMIT_EXCEEDED");
+      if (hardLimit !== undefined && candidate.typicalPriceCents > hardLimit) reasons.push("HARD_PRICE_LIMIT_EXCEEDED");
       if (reasons.length) filtered.push({ candidateId: candidate.id, reasons });
       return reasons.length === 0;
     });
@@ -134,6 +139,7 @@ export function rankMealCandidates(input: unknown): SkillResult<RankMealCandidat
       const likeMatches = intersections(candidate, parsed.longTermPreferences.foodLikes);
       const dislikeMatches = intersections(candidate, parsed.longTermPreferences.foodDislikes);
       const repeatCount = parsed.recentMealContext.recentMeals.filter((meal) => meal.name === candidate.name).length;
+      const mealPeriodMismatch = candidate.mealPeriod !== "ALL_DAY" && candidate.mealPeriod !== parsed.temporaryPreferences.mealPeriod;
       const isLight = containsAny(candidate, ["清淡", "少油", "低脂", "蒸", "汤", "蔬菜"]);
       const isSpicy = candidate.isSpicy || containsAny(candidate, ["辣", "麻辣", "香辣"]);
       let preferenceMatch = 1_500 + likeMatches * 500 - dislikeMatches * 1_000;
@@ -142,10 +148,15 @@ export function rankMealCandidates(input: unknown): SkillResult<RankMealCandidat
         if (isSpicy) preferenceMatch -= 1_500;
       }
       if (quickTags.has("SPICY") && isSpicy) preferenceMatch += 1_000;
+      const targetPrice = parsed.temporaryPreferences.targetPriceCents;
+      const targetPriceAdjustment = targetPrice
+        ? Math.max(0, 600 - Math.floor(Math.abs(candidate.typicalPriceCents - targetPrice) / 2))
+        : 0;
+      const baseVarietyScore = repeatCount === 0 ? 1_500 : quickTags.has("TRY_DIFFERENT") ? 0 : repeatCount === 1 ? 750 : 0;
       const scoreBreakdown = {
-        budgetFit: budgetScore(candidate.typicalPriceCents, parsed.financialContext.recommendedLunchPriceCents, hardLimit, emphasizeSavings),
+        budgetFit: Math.min(3_500, budgetScore(candidate.typicalPriceCents, parsed.financialContext.recommendedLunchPriceCents, referenceLimit, emphasizeSavings) + targetPriceAdjustment),
         preferenceMatch: Math.max(0, Math.min(3_000, preferenceMatch)),
-        recentVariety: repeatCount === 0 ? 1_500 : quickTags.has("TRY_DIFFERENT") ? 0 : repeatCount === 1 ? 750 : 0,
+        recentVariety: Math.max(0, baseVarietyScore - (mealPeriodMismatch ? 750 : 0)),
         historicalRating: candidate.userRating === null ? 500 : candidate.userRating * 200,
         locationConvenience: candidate.location === (parsed.temporaryPreferences.location ?? parsed.longTermPreferences.defaultLocation) ? 1_000 : 500,
       };
@@ -168,7 +179,10 @@ export function rankMealCandidates(input: unknown): SkillResult<RankMealCandidat
       ].slice(0, 3);
       const risks = [
         ...(candidate.typicalPriceCents > parsed.financialContext.recommendedLunchPriceCents ? ["ABOVE_RECOMMENDED_PRICE"] : []),
+        ...(candidate.typicalPriceCents > referenceLimit ? ["ABOVE_PREFERRED_PRICE_RANGE"] : []),
         ...(candidate.typicalPriceCents > parsed.financialContext.remainingBudgetCents ? ["WILL_EXCEED_TOTAL_BUDGET"] : []),
+        ...(mealPeriodMismatch ? ["MEAL_PERIOD_MISMATCH"] : []),
+        ...(stayNearMismatch ? ["LOCATION_MISMATCH"] : []),
         ...(repeatCount ? ["RECENTLY_EATEN"] : []),
         ...(dislikeMatches ? ["MATCHES_FOOD_DISLIKES"] : []),
         ...(candidate.ingredients.length === 0 ? ["INGREDIENT_INFO_UNKNOWN"] : []),
@@ -185,9 +199,17 @@ export function rankMealCandidates(input: unknown): SkillResult<RankMealCandidat
     const selected: RankedMealCandidate[] = [];
     const selectedIds = new Set<string>();
     for (const [recommendationType, selector] of directions) {
+      if (selected.length >= parsed.maxRecommendations) break;
       const choice = [...scored].sort(compareBy(selector)).find((item) => !selectedIds.has(item.candidateId));
       if (choice) {
         selected.push({ ...choice, recommendationType });
+        selectedIds.add(choice.candidateId);
+      }
+    }
+    for (const choice of [...scored].sort(compareBy((item) => item.totalScore))) {
+      if (selected.length >= parsed.maxRecommendations) break;
+      if (!selectedIds.has(choice.candidateId)) {
+        selected.push({ ...choice, recommendationType: "OVERALL" });
         selectedIds.add(choice.candidateId);
       }
     }

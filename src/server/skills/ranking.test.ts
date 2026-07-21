@@ -61,9 +61,15 @@ describe("rank_meal_candidates", () => {
     expect(result.success && result.data.filtered[0].reasons).toContain("STRICT_AVOIDANCE_CONFLICT");
   });
 
-  it("不符合用餐时段被硬过滤", () => {
+  it("严格忌口也会检查候选名称和商家", () => {
+    const result = rankMealCandidates(rankInput([candidate("a", { name: "花生酱三明治", tags: [], ingredients: [] })]));
+    expect(result.success && result.data.filtered[0].reasons).toContain("STRICT_AVOIDANCE_CONFLICT");
+  });
+
+  it("不符合用餐时段保留为可解释的降权候选", () => {
     const result = rankMealCandidates(rankInput([candidate("a", { mealPeriod: "DINNER" })]));
-    expect(result.success && result.data.filtered[0].reasons).toContain("MEAL_PERIOD_MISMATCH");
+    expect(result.success && result.data.status).toBe("READY");
+    expect(result.success && result.data.recommendations[0].risks).toContain("MEAL_PERIOD_MISMATCH");
   });
 
   it("全天候选符合任意用餐时段", () => {
@@ -130,12 +136,12 @@ describe("rank_meal_candidates", () => {
     expect(result.success && result.data.recommendations[0].scoreBreakdown.locationConvenience).toBe(1_000);
   });
 
-  it("最多返回4个且候选不重复", () => {
-    const result = rankMealCandidates(rankInput([candidate("a"), candidate("b", { userRating: 3 }), candidate("c", { userRating: 2 }), candidate("d", { userRating: 1 }), candidate("e")]));
+  it("按可配置容量返回候选且不重复", () => {
+    const result = rankMealCandidates(rankInput([candidate("a"), candidate("b", { userRating: 3 }), candidate("c", { userRating: 2 }), candidate("d", { userRating: 1 }), candidate("e"), candidate("f"), candidate("g")], { maxRecommendations: 6 }));
     if (result.success) {
-      expect(result.data.recommendations).toHaveLength(4);
-      expect(new Set(result.data.recommendations.map((item) => item.candidateId)).size).toBe(4);
-      expect(result.data.recommendations.map((item) => item.recommendationType)).toEqual(["OVERALL", "SAVE_MONEY", "TASTE", "NEW_OR_CONVENIENT"]);
+      expect(result.data.recommendations).toHaveLength(6);
+      expect(new Set(result.data.recommendations.map((item) => item.candidateId)).size).toBe(6);
+      expect(result.data.recommendations.slice(0, 4).map((item) => item.recommendationType)).toEqual(["OVERALL", "SAVE_MONEY", "TASTE", "NEW_OR_CONVENIENT"]);
     }
   });
 

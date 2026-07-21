@@ -14,8 +14,8 @@ export const snackDecisionResponseSchema = z.object({
   recommendation: z.enum(["BUY", "SWITCH_OR_REDUCE", "DELAY_OR_SKIP"]),
   title: z.string(),
   reasons: z.array(z.string()).min(1).max(4),
-  alternatives: z.array(z.string()).max(3),
-  agentComment: z.string().trim().min(1).max(500).nullable(),
+  alternatives: z.array(z.string()).max(5),
+  agentComment: z.string().trim().min(1).max(800).nullable(),
   agentSource: z.enum(["LLM", "RULES"]),
   context: z.object({
     recentDays: z.literal(7),

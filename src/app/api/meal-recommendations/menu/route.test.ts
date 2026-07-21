@@ -51,7 +51,7 @@ describe("POST /api/meal-recommendations/menu", () => {
   it("整体工作流超过硬截止时返回超时错误", async () => {
     await expect(withMenuWorkflowTimeout(new Promise(() => undefined), 1)).rejects.toMatchObject({
       name: "WorkflowTimeoutError",
-      message: "菜单识别和推荐超过55秒，请重试或改用菜单文字",
+      message: "菜单识别和推荐超过90秒，请重试或改用菜单文字",
     });
   });
 

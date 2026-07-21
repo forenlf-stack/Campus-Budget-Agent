@@ -54,14 +54,28 @@ describe("资金与偏好设置", () => {
 
   it("总预算不能超过扣除计划后的可用金额", () => {
     const input = validSettings();
-    input.totalBudgetCents = 120_000;
+    input.totalBudgetCents = 250_000;
 
     expect(settingsSchema.safeParse(input).success).toBe(false);
   });
 
-  it("固定支出、储蓄和预留超过生活费时配置不可行", () => {
+  it("预算上限使用当前可用余额而不是月生活费", () => {
     const input = validSettings();
-    input.fixedExpenseCents = 180_000;
+    input.monthlyAllowanceCents = 250_000;
+    input.currentBalanceCents = 350_000;
+    input.fixedExpenseCents = 10_000;
+    input.monthlySavingsTargetCents = 20_000;
+    input.requiredReserveCents = 10_000;
+    input.totalBudgetCents = 310_000;
+
+    const parsed = settingsSchema.safeParse(input);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(calculateSettingsSummary(parsed.data)).toMatchObject({ availableAfterPlansCents: 310_000, unbudgetedCents: 0 });
+  });
+
+  it("固定支出、储蓄和预留超过当前余额时配置不可行", () => {
+    const input = validSettings();
+    input.fixedExpenseCents = 310_000;
 
     expect(settingsSchema.safeParse(input).success).toBe(false);
   });

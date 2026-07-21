@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
+import { agentCapabilities } from "@/lib/agent-capabilities";
 import type { MealPeriod } from "@/lib/meal-candidates";
 import { directMealRecommendationInputSchema } from "@/lib/meal-recommendations";
 import type { SkillError, SkillResult } from "@/lib/skill-result";
@@ -121,7 +122,7 @@ export function runFixedMealRecommendation(
   if (!financial.success) return failed(runId, executionSteps, "get_financial_context", financial.error);
   executionSteps.push({ step: "get_financial_context", status: "SUCCESS", details: { budgetPeriod: financial.data.budgetPeriod, remainingBudgetCents: financial.data.remainingBudgetCents } });
 
-  const recent = dependencies.getRecentMealConsumption({ queryDate, recentCount: 3 }, dependencies.store);
+  const recent = dependencies.getRecentMealConsumption({ queryDate, recentCount: agentCapabilities.mealRecommendations.recentMealCount }, dependencies.store);
   if (!recent.success) return failed(runId, executionSteps, "get_recent_meal_consumption", recent.error);
   executionSteps.push({ step: "get_recent_meal_consumption", status: "SUCCESS", details: { days: recent.data.days, mealCount: recent.data.mealCount, highPriceThresholdCents: recent.data.highPriceEvidence.thresholdCents } });
 
@@ -138,13 +139,13 @@ export function runFixedMealRecommendation(
         quickTags: interpreted.quickTags,
         preferredTerms: interpreted.preferredTerms,
         avoidedTerms: interpreted.avoidedTerms,
+        strictAvoidedTerms: interpreted.strictAvoidedTerms,
         ...(interpreted.hardPriceLimitCents ? { hardPriceLimitCents: interpreted.hardPriceLimitCents } : {}),
+        ...(interpreted.targetPriceCents ? { targetPriceCents: interpreted.targetPriceCents } : {}),
       }
     : parseMealRequest(parsed.data.userRequest);
-  const effectiveLimit = Math.min(financial.data.lunchHardLimitCents, naturalRequest.hardPriceLimitCents ?? financial.data.lunchHardLimitCents);
   const quickTags = unique([...parsed.data.quickTags, ...naturalRequest.quickTags]);
-  const stayNear = quickTags.includes("STAY_NEAR");
-  const retrieved = dependencies.retrieveHistoryMeals({ mealPeriod, ...(stayNear && location ? { location } : {}), maximumPriceCents: effectiveLimit, enabledOnly: true }, dependencies.store);
+  const retrieved = dependencies.retrieveHistoryMeals({ enabledOnly: true }, dependencies.store);
   if (!retrieved.success) return failed(runId, executionSteps, "retrieve_history_meals", retrieved.error);
   const excluded = new Set(parsed.data.excludeCandidateIds);
   const unexcludedCandidates = retrieved.data.candidates.filter((candidate) => !excluded.has(candidate.id));
@@ -155,7 +156,7 @@ export function runFixedMealRecommendation(
   const retrievedCandidates = exclusionFallback
     ? [...retrieved.data.candidates.slice(rotationOffset), ...retrieved.data.candidates.slice(0, rotationOffset)]
     : unexcludedCandidates;
-  executionSteps.push({ step: "retrieve_history_meals", status: "SUCCESS", details: { retrievedCount: retrieved.data.count, excludedCount: retrieved.data.count - unexcludedCandidates.length, exclusionFallback, rotationOffset, effectiveMaximumPriceCents: effectiveLimit, mealPeriod, ...(location ? { location } : {}) } });
+  executionSteps.push({ step: "retrieve_history_meals", status: "SUCCESS", details: { retrievedCount: retrieved.data.count, excludedCount: retrieved.data.count - unexcludedCandidates.length, exclusionFallback, rotationOffset, referencePriceLimitCents: financial.data.lunchHardLimitCents, explicitHardPriceLimitCents: naturalRequest.hardPriceLimitCents ?? 0, mealPeriod, ...(location ? { location } : {}) } });
   if (retrievedCandidates.length === 0) {
     executionSteps.push({ step: "rank_meal_candidates", status: "SKIPPED", details: { reason: "NO_CANDIDATES_RETRIEVED" } });
     executionSteps.push({ step: "simulate_budget_impact", status: "SKIPPED", details: { reason: "NO_RANKED_CANDIDATES" } });
@@ -176,11 +177,18 @@ export function runFixedMealRecommendation(
     recentMealContext: recent.data,
     longTermPreferences: {
       foodLikes: unique([...settings.foodLikes, ...naturalRequest.preferredTerms]),
-      foodDislikes: settings.foodDislikes,
-      strictAvoidances: unique([...settings.foodAllergens, ...naturalRequest.avoidedTerms]),
+      foodDislikes: unique([...settings.foodDislikes, ...naturalRequest.avoidedTerms]),
+      strictAvoidances: unique([...settings.foodAllergens, ...naturalRequest.strictAvoidedTerms]),
       ...(settings.defaultLocation ? { defaultLocation: settings.defaultLocation } : {}),
     },
-    temporaryPreferences: { mealPeriod, hardPriceLimitCents: effectiveLimit, quickTags },
+    temporaryPreferences: {
+      mealPeriod,
+      referencePriceLimitCents: financial.data.lunchHardLimitCents,
+      ...(naturalRequest.hardPriceLimitCents ? { hardPriceLimitCents: naturalRequest.hardPriceLimitCents } : {}),
+      ...(naturalRequest.targetPriceCents ? { targetPriceCents: naturalRequest.targetPriceCents } : {}),
+      quickTags,
+    },
+    maxRecommendations: parsed.data.maxRecommendations,
   });
   if (!ranked.success) return failed(runId, executionSteps, "rank_meal_candidates", ranked.error);
   if (exclusionFallback) {
@@ -194,7 +202,7 @@ export function runFixedMealRecommendation(
   }
 
   const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const recommendations = ranked.data.recommendations.slice(0, 4).flatMap((ranking): FixedMealRecommendation[] => {
+  const recommendations = ranked.data.recommendations.slice(0, parsed.data.maxRecommendations).flatMap((ranking): FixedMealRecommendation[] => {
     const candidate = candidatesById.get(ranking.candidateId);
     if (!candidate) return [];
     let impact: SkillResult<BudgetImpactData>;

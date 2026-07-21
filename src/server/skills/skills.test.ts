@@ -109,10 +109,10 @@ describe("get_financial_context", () => {
     expect(result.success && result.data.savingsTarget).toEqual({ status: "CONFIGURED", targetCents: 40_000 });
   });
 
-  it("不可行预算返回稳定错误", () => {
-    const invalid = { ...settings, fixedExpenseCents: 300_000 };
-    const result = getFinancialContext({ queryDate }, store({ readSettings: () => invalid }));
-    expect(result).toMatchObject({ success: false, error: { code: "INVALID_BUDGET_PLAN" } });
+  it("余额随消费下降后不会让既有月预算上下文失效", () => {
+    const changedBalance = { ...settings, currentBalanceCents: 100_000 };
+    const result = getFinancialContext({ queryDate }, store({ readSettings: () => changedBalance }));
+    expect(result).toMatchObject({ success: true, data: { flexibleBudgetCents: 110_000, remainingBudgetCents: 108_000 } });
   });
 
   it("拒绝无效日期和周期", () => {

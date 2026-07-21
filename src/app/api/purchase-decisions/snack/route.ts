@@ -18,7 +18,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: result.error.code === "INVALID_INPUT" ? 400 : 500 });
     }
     let response = result.data;
-    try { response = await explainSnackDecisionWithLlm(input, result.data); } catch { /* Deterministic explanation remains available offline. */ }
+    try {
+      response = await explainSnackDecisionWithLlm(input, result.data);
+    } catch (error) {
+      console.warn("Snack decision Agent unavailable; using deterministic fallback.", error);
+    }
     return NextResponse.json(snackDecisionResponseSchema.parse(response));
   } catch (error) {
     const validation = error instanceof z.ZodError || error instanceof SyntaxError;

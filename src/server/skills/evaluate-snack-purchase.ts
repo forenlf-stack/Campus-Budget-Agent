@@ -54,8 +54,14 @@ export function evaluateSnackPurchase(input: unknown, store: SkillReadStore = sk
       ...(exceedsFrequency ? [`本次后将超过每周 ${settings.weeklySnackDrinkLimit} 次的偏好上限`] : []),
       ...(exceedsWeeklyAmount ? [`本次后将超过每周 ${(settings.weeklySnackDrinkBudgetCents / 100).toFixed(2)} 元的偏好额度`] : []),
     ].slice(0, 4);
+    const weeklyBudgetBeforeCents = settings.weeklySnackDrinkBudgetCents - recentSpendingCents;
+    const cheaperAlternativeCents = Math.min(parsed.priceCents - 100, weeklyBudgetBeforeCents);
     const alternatives = level === "GREEN" ? [] : [
-      `换成不超过 ${(Math.max(100, Math.min(parsed.priceCents - 100, settings.weeklySnackDrinkBudgetCents - recentSpendingCents)) / 100).toFixed(2)} 元的选择`,
+      ...(settings.weeklySnackDrinkBudgetCents > 0 && weeklyBudgetBeforeCents <= 0
+        ? ["本周零食饮料额度已经用完，不建议为了凑额度改买明显不合理的低价商品；可以减少份量或下周再买"]
+        : cheaperAlternativeCents >= 100
+          ? [`如果仍想购买，可减少份量或选择不超过 ${(cheaperAlternativeCents / 100).toFixed(2)} 元的同类商品`]
+          : ["如果仍想购买，优先减少份量，而不是为了凑额度更换成不合理的低价商品"]),
       todayCount > 0 ? "今天先不买，改到其他天" : "先等10分钟，再确认是否仍然想买",
     ];
     return skillSuccess(snackDecisionResponseSchema.parse({

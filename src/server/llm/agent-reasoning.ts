@@ -60,12 +60,19 @@ const snackCopySchema = z.object({
 }).passthrough();
 
 export async function explainSnackDecisionWithLlm(input: SnackDecisionInput, deterministic: SnackDecisionResponse) {
-  const facts = { item: input, decision: deterministic };
+  const facts = {
+    item: input,
+    level: deterministic.level,
+    title: deterministic.title,
+    reasons: deterministic.reasons,
+    currentAlternatives: deterministic.alternatives,
+    context: deterministic.context,
+  };
   const copy = await callDeepSeekJson(
-    "你是大学生零食饮料消费决策 Agent。根据给定的本地判断、商品名称与商家、近7天和前7天消费、近期平均单价、周偏好余量及总预算，给出自然、温和且具体的点评。明确回答为什么可以买、为什么适合少买一点或为什么建议暂缓。可以补充最多3条与当前场景相关、不会虚构价格的替代做法到 additionalAlternatives。不得改变 level、recommendation、title、reasons 或任何金额/次数，不得声称查询了外部价格，不要说教或制造焦虑。只返回JSON。",
+    "你是大学生零食饮料消费决策 Agent。根据给定的本地判断、商品名称与商家、近7天和前7天消费、近期平均单价、周偏好余量及总预算，给出自然、温和且具体的点评。先理解商品本身：可以识别葡萄属于水果、牛奶属于乳制品等明确常识，并据此避免把所有商品都写成奶茶或糖果，但不得输出输入中没有提供的营养、健康、热量或成分断言，也不得擅自修改账本分类。明确回答为什么可以买、为什么适合少买一点或为什么建议暂缓。可以补充最多3条与当前商品相关的做法，例如减少份量、改天购买或调整本周其他零食消费；不得虚构商品价格，不得建议明显不现实的极低价格。不得改变本地判断或任何金额、次数，不得声称查询了外部价格，不要说教或制造焦虑。输出必须且只能是JSON对象，顶层只允许两个字段：agentComment为非空字符串，additionalAlternatives为字符串数组；不要返回decision、item、context、level、title、reasons等输入字段。示例：{\"agentComment\":\"这次更适合少买一些。\",\"additionalAlternatives\":[\"减少购买份量\"]}",
     JSON.stringify(facts),
     snackCopySchema,
-    { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },
+    { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "disabled" },
   );
   return {
     ...deterministic,

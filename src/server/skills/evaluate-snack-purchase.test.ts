@@ -44,7 +44,21 @@ describe("evaluate_snack_purchase", () => {
       { id: "one", type: "EXPENSE", category: "SNACK_DRINK", amountCents: 900, occurredAt: new Date("2026-07-15T09:00:00+08:00"), isFixedExpense: false },
       { id: "two", type: "EXPENSE", category: "SNACK_DRINK", amountCents: 900, occurredAt: new Date("2026-07-16T09:00:00+08:00"), isFixedExpense: false },
     ];
-    expect(evaluateSnackPurchase(input(500), store(transactions))).toMatchObject({ success: true, data: { level: "RED", recommendation: "DELAY_OR_SKIP" } });
+    const result = evaluateSnackPurchase(input(500), store(transactions));
+    expect(result).toMatchObject({ success: true, data: { level: "RED", recommendation: "DELAY_OR_SKIP" } });
+    if (result.success) expect(result.data.alternatives.join(" ")).not.toContain("1.00 元");
+  });
+
+  it("周额度已经用完时不生成不现实的最低价格建议", () => {
+    const transactions: BudgetTransaction[] = [
+      { id: "one", type: "EXPENSE", category: "SNACK_DRINK", amountCents: 3_000, occurredAt: new Date("2026-07-15T09:00:00+08:00"), isFixedExpense: false },
+    ];
+    const result = evaluateSnackPurchase({ ...input(3_000), itemName: "水果葡萄1斤" }, store(transactions));
+    expect(result).toMatchObject({ success: true, data: { level: "YELLOW" } });
+    if (result.success) {
+      expect(result.data.alternatives[0]).toContain("额度已经用完");
+      expect(result.data.alternatives.join(" ")).not.toMatch(/不超过\s*1\.00\s*元/);
+    }
   });
 
   it("提供前后两周对比和近期平均单价", () => {

@@ -16,6 +16,14 @@ import { createSkillReadStore } from "@/server/skill-read-store";
 
 export const runtime = "nodejs";
 
+export function conversationalizeAgentText(text: string) {
+  return text
+    .replace(/^用户需要/, "你希望")
+    .replace(/^用户希望/, "你希望")
+    .replace(/^用户想要/, "你想要")
+    .replace(/^用户想/, "你想");
+}
+
 export async function POST(request: NextRequest) {
   const startedAt = performance.now();
   try {
@@ -28,7 +36,11 @@ export async function POST(request: NextRequest) {
     if (!input.skipAgentInterpretation) {
       try {
         interpretedRequest = await interpretMealRequestWithLlm(input.userRequest);
-        if (interpretedRequest) agentResponse = { understanding: interpretedRequest.understanding, response: interpretedRequest.response, source: "LLM" };
+        if (interpretedRequest) agentResponse = {
+          understanding: conversationalizeAgentText(interpretedRequest.understanding),
+          response: conversationalizeAgentText(interpretedRequest.response),
+          source: "LLM",
+        };
       } catch (error) { llmFallbackReason = error instanceof Error ? error.message : "模型响应不可用"; }
     }
     if (!agentResponse && input.userRequest) {

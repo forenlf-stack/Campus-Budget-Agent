@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/server/llm/deepseek-client", () => ({
+const { callDeepSeekJson, callDeepSeekMessagesJson } = vi.hoisted(() => ({
+  callDeepSeekJson: vi.fn(async (_system: string, user: string) => {
+    const facts = JSON.parse(user) as {
+      subject: string;
+      configuredRecommendedMealPriceYuan: string;
+      configuredAcceptableUpperLimitYuan: string;
+      recentWindowDays: number;
+      recentNetAverageYuan: string;
+    };
+    return {
+      reply: `${facts.subject}今天可以优先参考¥${facts.configuredRecommendedMealPriceYuan}的建议餐价，¥${facts.configuredAcceptableUpperLimitYuan}是可接受上限。你近${facts.recentWindowDays}天的实际净均价是¥${facts.recentNetAverageYuan}，这反映过去花费偏高，不等于今天也应照此消费；当前没有可直接比较的${facts.subject}候选。`,
+    };
+  }),
   callDeepSeekMessagesJson: vi.fn().mockResolvedValue({
     reply: "如果不想吃面，可以优先考虑鸡腿饭。",
     referencedCandidateIds: ["meal-1", "invented"],
@@ -8,6 +20,11 @@ vi.mock("@/server/llm/deepseek-client", () => ({
     suggestedQuickTags: [],
     needsNewRecommendation: true,
   }),
+}));
+
+vi.mock("@/server/llm/deepseek-client", () => ({
+  callDeepSeekJson,
+  callDeepSeekMessagesJson,
 }));
 
 vi.mock("@/server/skills/retrieve-historical-meal-patterns", () => ({
@@ -75,5 +92,87 @@ describe("POST /api/meal-recommendations/chat", () => {
     expect(payload.reply).toContain("咖喱鸡肉饭");
     expect(payload.reply).toContain("本地");
     expect(payload.reply).not.toContain("我可以直接评价");
+  });
+
+  it("询问具体餐食价格时直接回答价格区间，不触发无关候选重算", async () => {
+    const request = new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "我想吃一些咖喱，给我一些价格建议",
+        recommendations: [recommendation],
+      }),
+    });
+    const response = await POST(request as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload).toMatchObject({ source: "LLM", needsNewRecommendation: false, suggestedRequest: null });
+    expect(payload.reply).toContain("咖喱");
+    expect(payload.reply).toContain("没有可直接比较的咖喱候选");
+    expect(payload.reply).not.toContain("重新计算");
+  });
+
+  it.each(["日料", "烧烤", "轻食"])("价格建议可泛化到%s而不是依赖咖喱特例", async (subject) => {
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: `我想尝试一些${subject}，给我价格建议`, recommendations: [] }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload).toMatchObject({ source: "LLM", needsNewRecommendation: false });
+    expect(payload.reply).toContain(subject);
+    expect(payload.reply).toContain(`没有可直接比较的${subject}候选`);
+  });
+
+  it("价格分析模型失败时保留本地事实回退", async () => {
+    callDeepSeekJson.mockRejectedValueOnce(new Error("temporary failure"));
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "我想吃咖喱，给我价格建议", recommendations: [] }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(payload).toMatchObject({ source: "RULES", needsNewRecommendation: false });
+    expect(payload.fallbackReason).toContain("temporary failure");
+    expect(payload.reply).toContain("建议把这一顿控制在");
+  });
+
+  it("保留模型分析，同时修正仅凭均价推断超限频率的措辞", async () => {
+    callDeepSeekJson.mockResolvedValueOnce({ reply: "咖喱近14天净均价为¥28.90，因此经常超出¥25.00上限；今天最好控制在15元以内，这是咖喱建议餐价。" });
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "我想吃咖喱，给我价格建议", recommendations: [] }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(payload.source).toBe("LLM");
+    expect(payload.reply).toContain("近期净均价高于");
+    expect(payload.reply).not.toContain("经常超出");
+    expect(payload.reply).toContain("正餐建议餐价");
+    expect(payload.reply).toContain("15.00元左右");
+    expect(payload.reply).not.toContain("15元以内");
+    expect(payload.reply).toContain("当前没有可直接比较的咖喱候选");
+  });
+
+  it("用户明确说明已经购买时返回结构化记账草稿而不直接写账", async () => {
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "我买了一份35元的玛格丽特，尝试一下", recommendations: [] }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload).toMatchObject({
+      source: "RULES",
+      needsNewRecommendation: false,
+      purchaseDraft: { itemName: "玛格丽特", actualPriceCents: 3_500 },
+    });
+    expect(payload.reply).toContain("只有再次确认后才会写入账本");
   });
 });

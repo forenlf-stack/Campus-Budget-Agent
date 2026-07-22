@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BottomNavigation } from "@/app/components/bottom-navigation";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col"><div className="min-h-screen flex-1">{children}</div><BottomNavigation /></body>
     </html>
   );
 }

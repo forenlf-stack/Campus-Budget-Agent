@@ -18,9 +18,17 @@ vi.mock("@/server/workflows/fixed-meal-recommendation", () => ({
 }));
 
 import { runFixedMealRecommendation } from "@/server/workflows/fixed-meal-recommendation";
-import { POST } from "./route";
+import { conversationalizeAgentText, POST } from "./route";
 
 describe("POST /api/meal-recommendations/direct", () => {
+  it.each([
+    ["用户想尝试日料", "你想尝试日料"],
+    ["用户需要一顿清淡午餐", "你希望一顿清淡午餐"],
+    ["用户希望控制价格", "你希望控制价格"],
+  ])("把模型的后台描述转换为对话口吻：%s", (input, expected) => {
+    expect(conversationalizeAgentText(input)).toBe(expected);
+  });
+
   it("接受空对象并返回推荐卡与durationMs", async () => {
     const request = new Request("http://localhost/api/meal-recommendations/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const response = await POST(request as Parameters<typeof POST>[0]);

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealRecommendationCardSchema, mealRecommendationQuickTags } from "@/lib/meal-recommendations";
+import { mealPurchaseDraftSchema } from "@/lib/meal-purchase-intent";
 
 export const mealAgentMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -24,6 +25,7 @@ export const mealAgentChatResponseSchema = z.object({
   needsNewRecommendation: z.boolean(),
   source: z.enum(["LLM", "RULES"]),
   fallbackReason: z.string().optional(),
+  purchaseDraft: mealPurchaseDraftSchema.nullable().default(null),
 }).strict();
 
 export type MealAgentMessage = z.infer<typeof mealAgentMessageSchema>;

@@ -9,7 +9,7 @@ export const confirmMealDecisionInputSchema = z.object({
   recommendationRunId: z.string().trim().min(1).max(100),
   candidateId: z.string().trim().min(1).max(100),
   itemName: z.string().trim().min(1).max(100),
-  source: z.enum(["HISTORY", "MENU"]),
+  source: z.enum(["HISTORY", "MENU", "CHAT"]),
   recommendationType: z.enum(mealRecommendationTypes),
   recommendationRisk: z.string().trim().min(1).max(200),
   recommendedPriceCents: positiveCents,

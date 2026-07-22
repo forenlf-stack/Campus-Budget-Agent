@@ -19,7 +19,7 @@ export interface ModelMealRequest {
   strictAvoidedTerms: string[];
 }
 
-const preferencePatterns = [/(?:想吃|想要|来点|推荐)([^，。,.！!？?]{1,30})/g];
+const preferencePatterns = [/(?:想吃|想要|来点|推荐|想尝试|想试试|想尝尝|尝尝|试试)([^，。,.！!？?]{1,30})/g];
 const avoidancePattern = /(?:不太想吃|不太想要|不怎么想吃|不想吃|少一点|不要|避开)([^，。,.！!？?]{1,30})/g;
 const strictAvoidancePatterns = [
   /(?:我)?对([^，。,.！!？?]{1,30})过敏/g,
@@ -114,7 +114,7 @@ export function parseMealRequest(value: string): ParsedMealRequest {
   const strictAvoidedTerms = unique(capturedTerms(text, strictAvoidancePatterns)
     .map((term) => term.replace(/(?:的|食物|食品)$/, "").trim()));
   const preferredTerms = unique(capturedTerms(text, preferencePatterns)
-    .map((term) => term.replace(/(?:的|一点|一些|吧)$/, "").trim()))
+    .map((term) => term.replace(/^(?:一些|一点|一下|点|一份|一个)\s*/, "").replace(/(?:的|一点|一些|吧)$/, "").trim()))
     .filter((term) => !avoidedTerms.includes(term) && !strictAvoidedTerms.includes(term));
 
   return {

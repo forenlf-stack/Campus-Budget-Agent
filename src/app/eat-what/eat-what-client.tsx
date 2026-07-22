@@ -39,9 +39,9 @@ const menuStatusLabels: Record<MenuMealRecommendationResponse["status"], string>
 };
 
 interface PendingPurchase {
-  item: MealRecommendationCard;
+  item: Pick<MealRecommendationCard, "candidateId" | "name" | "recommendationType" | "risk" | "priceCents">;
   runId: string;
-  source: "HISTORY" | "MENU";
+  source: "HISTORY" | "MENU" | "CHAT";
   idempotencyKey: string;
   actualPrice: string;
   occurredAt: string;
@@ -200,7 +200,7 @@ export function EatWhatClient() {
       await recommend(false, { request: message }); return;
     }
     if (route === "ASSESSMENT") { await assessMealPlan(message); return; }
-    setChatBusy(true); setError("");
+    setChatBusy(true); setError(""); setAssessment(null);
     try {
       const response = await fetch("/api/meal-recommendations/chat", {
         method: "POST",
@@ -211,6 +211,23 @@ export function EatWhatClient() {
       if (!response.ok) throw new Error("Agent 对话失败");
       const result = mealAgentChatResponseSchema.parse(payload);
       setConversation((current) => normalizeMealConversation([...current, { role: "user", content: message }, { role: "assistant", content: result.reply }]));
+      if (result.purchaseDraft) {
+        const draftId = crypto.randomUUID();
+        setPendingPurchase({
+          item: {
+            candidateId: `chat-${draftId}`,
+            name: result.purchaseDraft.itemName,
+            recommendationType: "OVERALL",
+            risk: "用户通过对话报告已购买",
+            priceCents: result.purchaseDraft.actualPriceCents ?? 1,
+          },
+          runId: `chat-${draftId}`,
+          source: "CHAT",
+          idempotencyKey: crypto.randomUUID(),
+          actualPrice: result.purchaseDraft.actualPriceCents === null ? "" : centsToYuan(result.purchaseDraft.actualPriceCents),
+          occurredAt: localDateTimeValue(),
+        });
+      }
       if (result.needsNewRecommendation && result.suggestedRequest) {
         const tags = [...new Set([...quickTags, ...result.suggestedQuickTags])];
         setQuickTags(tags);
@@ -262,7 +279,7 @@ export function EatWhatClient() {
           source: pendingPurchase.source,
           recommendationType: pendingPurchase.item.recommendationType,
           recommendationRisk: pendingPurchase.item.risk,
-          recommendedPriceCents: pendingPurchase.item.priceCents,
+          recommendedPriceCents: pendingPurchase.source === "CHAT" ? actualPriceCents : pendingPurchase.item.priceCents,
           actualPriceCents,
           occurredAt: occurredAt.toISOString(),
         }),
@@ -286,7 +303,7 @@ export function EatWhatClient() {
   }
 
   const menuLoading = menuStage !== "idle";
-  return <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-5xl">
+  return <main className="app-page meal-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-5xl">
     <div className="mb-8"><HomeLink /></div><header className="text-center"><p className="page-kicker">轻量餐食决策</p><h1 className="page-heading mt-4 text-4xl sm:text-5xl">今天吃什么？</h1><p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-slate-600">不用填表，按当前时段、默认地点和预算直接推荐。</p></header>
     <section className="mt-8 flex flex-wrap justify-center gap-2">{mealRecommendationQuickTags.map((tag) => <button key={tag} type="button" aria-pressed={quickTags.includes(tag)} onClick={() => toggle(tag)} className={`rounded-full border px-4 py-2.5 text-sm font-semibold shadow-sm transition ${quickTags.includes(tag) ? "border-orange-600 bg-gradient-to-r from-orange-600 to-amber-500 text-white shadow-orange-600/15" : "border-white bg-white/85 text-slate-600 hover:-translate-y-0.5 hover:border-orange-200 hover:text-orange-700"}`}>{quickTagLabels[tag]}</button>)}</section>
     <div className="mt-3 flex justify-center"><label className="flex items-center gap-2 text-xs text-slate-500">候选数量<select value={recommendationCount} onChange={(event) => setRecommendationCount(Number(event.target.value))} className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-sm text-slate-700">{[4, 6, 8, 10].map((count) => <option key={count} value={count}>{count} 个</option>)}</select></label></div>
@@ -299,7 +316,7 @@ export function EatWhatClient() {
     {menuData && <section className="mt-8 rounded-2xl border border-orange-100 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-bold">菜单推荐</h2><span className="text-xs text-slate-500">识别来源：{menuData.recognition.source === "image" ? "菜单图片" : "菜单文字"}</span></div><p className="mt-2 text-sm text-slate-600">{menuStatusLabels[menuData.status]}</p><p className="mt-2 text-xs text-slate-500">识别 {menuData.recognition.detectedCount} 项 · 有效 {menuData.recognition.validCount} 项 · 排除 {menuData.recognition.rejectedCount} 项</p>{menuData.recognition.warnings.map((warning) => <p key={warning} className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">识别提示：{warning}</p>)}{menuData.pendingConfirmation.length ? <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4"><h3 className="font-semibold text-amber-900">价格未知，暂不作为预算内首选</h3>{menuData.pendingConfirmation.map((item) => <div key={item.temporaryId} className="mt-3 flex flex-wrap items-center gap-2"><span className="min-w-28 text-sm">{item.name}</span><input aria-label={`${item.name}实际价格`} value={priceInputs[item.temporaryId] ?? ""} onChange={(event) => setPriceInputs((current) => ({ ...current, [item.temporaryId]: event.target.value }))} inputMode="decimal" placeholder="实际价格" className="w-28 rounded-lg border border-amber-300 px-2 py-1" /><button type="button" onClick={() => confirmPrice(item)} disabled={menuLoading} className="rounded-lg bg-amber-700 px-3 py-1 text-sm font-semibold text-white">按实际价格重新推荐</button></div>)}</div> : null}<MenuCards recommendations={menuData.recommendations} selectedId={pendingPurchase?.item.candidateId ?? null} onSelect={(item) => selectRecommendation(item, menuData.runId, "MENU")} /></section>}
     {!menuData && <div className="mt-4 text-center"><button type="button" onClick={inputMenuText} className="text-sm text-slate-500 underline">手动输入菜单文字</button><span className="mx-2 text-slate-300">·</span><button type="button" onClick={() => void recommend(false)} className="text-sm text-slate-500 underline">改用历史推荐</button></div>}
     {(!menuData || data) && <>{loading && <div role="status" className="py-16 text-center text-sm text-slate-500">正在结合预算和近期正餐生成推荐…</div>}{!loading && data?.status === "NO_RECOMMENDATIONS" && <div className="mt-8 rounded-2xl border border-dashed border-stone-300 bg-white py-16 text-center text-sm text-slate-500">当前没有通过启用状态、明确价格上限和严格忌口的候选餐食。</div>}{!loading && data?.recommendations.length ? <MenuCards recommendations={data.recommendations} selectedId={pendingPurchase?.item.candidateId ?? null} onSelect={(item) => selectRecommendation(item, data.runId, "HISTORY")} /> : null}{data && <p className="mt-6 text-center text-xs text-slate-400">本次计算 {data.durationMs.toFixed(2)} ms</p>}</>}
-    {pendingPurchase && <section className="mx-auto mt-8 max-w-xl rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><h2 className="text-lg font-bold text-emerald-950">确认实际消费</h2><p className="mt-2 text-sm text-emerald-900">只有点击最终确认后才会写入消费记录。</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="grid gap-1.5 text-sm text-emerald-950">餐食<input value={pendingPurchase.item.name} disabled className="rounded-lg border border-emerald-200 bg-white px-3 py-2 disabled:text-slate-700" /></label><label className="grid gap-1.5 text-sm text-emerald-950">实际金额（元）<input value={pendingPurchase.actualPrice} onChange={(event) => setPendingPurchase({ ...pendingPurchase, actualPrice: event.target.value })} inputMode="decimal" className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label><label className="grid gap-1.5 text-sm text-emerald-950 sm:col-span-2">消费时间<input type="datetime-local" value={pendingPurchase.occurredAt} onChange={(event) => setPendingPurchase({ ...pendingPurchase, occurredAt: event.target.value })} className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label></div><div className="mt-5 flex gap-3"><button type="button" disabled={confirmingPurchase} onClick={() => void confirmPurchase()} className="rounded-lg bg-emerald-800 px-4 py-2 font-semibold text-white disabled:opacity-50">{confirmingPurchase ? "正在记账…" : "确认购买并记账"}</button><button type="button" disabled={confirmingPurchase} onClick={() => setPendingPurchase(null)} className="rounded-lg border border-emerald-700 px-4 py-2 font-semibold text-emerald-900">取消</button></div></section>}
+    {pendingPurchase && <section className="mx-auto mt-8 max-w-xl rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><h2 className="text-lg font-bold text-emerald-950">确认实际消费</h2><p className="mt-2 text-sm text-emerald-900">Agent 只预填信息；只有点击最终确认后才会写入消费记录。</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="grid gap-1.5 text-sm text-emerald-950">餐食 / 项目<input value={pendingPurchase.item.name} onChange={(event) => setPendingPurchase({ ...pendingPurchase, item: { ...pendingPurchase.item, name: event.target.value } })} className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label><label className="grid gap-1.5 text-sm text-emerald-950">实际金额（元）<input value={pendingPurchase.actualPrice} onChange={(event) => setPendingPurchase({ ...pendingPurchase, actualPrice: event.target.value })} inputMode="decimal" className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label><label className="grid gap-1.5 text-sm text-emerald-950 sm:col-span-2">消费时间<input type="datetime-local" value={pendingPurchase.occurredAt} onChange={(event) => setPendingPurchase({ ...pendingPurchase, occurredAt: event.target.value })} className="rounded-lg border border-emerald-300 bg-white px-3 py-2" /></label></div><div className="mt-5 flex gap-3"><button type="button" disabled={confirmingPurchase} onClick={() => void confirmPurchase()} className="rounded-lg bg-emerald-800 px-4 py-2 font-semibold text-white disabled:opacity-50">{confirmingPurchase ? "正在记账…" : "确认购买并记账"}</button><button type="button" disabled={confirmingPurchase} onClick={() => setPendingPurchase(null)} className="rounded-lg border border-emerald-700 px-4 py-2 font-semibold text-emerald-900">取消</button></div></section>}
     {purchaseMessage && <p role="status" className="mx-auto mt-6 max-w-xl rounded-xl bg-emerald-100 p-4 text-center text-sm font-semibold text-emerald-900">{purchaseMessage}</p>}
     {menuData?.timing && <p className="mt-5 text-center text-xs text-slate-400">处理耗时：总计 {menuData.timing.totalMs} ms · 提取 {menuData.timing.extractionMs} ms · 上下文 {menuData.timing.contextMs} ms · 排序 {menuData.timing.rankingMs} ms</p>}
   </div>{menuTextOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="menu-text-title"><div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl"><h2 id="menu-text-title" className="text-xl font-bold">输入菜单文字</h2><p className="mt-2 text-sm text-slate-600">建议每行输入一个菜品和明确价格，例如“鸡腿饭 15元”。至少输入两项才能进行比较推荐。</p><textarea autoFocus value={menuTextInput} onChange={(event) => setMenuTextInput(event.target.value)} placeholder={"鸡腿饭 15元\n牛肉面 18元\n番茄鸡蛋面 12元"} className="mt-5 min-h-48 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-orange-600 focus:ring-2 focus:ring-orange-100" /><div className="mt-5 flex justify-end gap-3"><button type="button" onClick={() => setMenuTextOpen(false)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">取消</button><button type="button" onClick={submitMenuText} className="rounded-xl bg-orange-700 px-4 py-2 text-sm font-semibold text-white">开始识别并推荐</button></div></div></div>}</main>;

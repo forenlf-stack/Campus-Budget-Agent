@@ -187,10 +187,10 @@ export function SettingsForm() {
   }
 
   if (loadingError) {
-    return <main className="app-page p-6"><HomeLink /><div className="surface-card mx-auto mt-16 max-w-md rounded-3xl p-8 text-center"><h1 className="text-xl font-bold">配置加载失败</h1><p className="mt-3 text-sm text-red-700">{loadingError}</p><button onClick={() => void load()} className="mt-6 rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white">重新加载</button></div></main>;
+    return <main className="app-page p-6"><HomeLink href="/profile" label="返回用户信息" /><div className="surface-card mx-auto mt-16 max-w-md rounded-3xl p-8 text-center"><h1 className="text-xl font-bold">配置加载失败</h1><p className="mt-3 text-sm text-red-700">{loadingError}</p><button onClick={() => void load()} className="mt-6 rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white">重新加载</button></div></main>;
   }
   if (!form) {
-    return <main className="app-page p-6"><HomeLink /><p className="mt-24 text-center text-sm text-slate-500">正在加载资金与偏好配置…</p></main>;
+    return <main className="app-page p-6"><HomeLink href="/profile" label="返回用户信息" /><p className="mt-24 text-center text-sm text-slate-500">正在加载资金与偏好配置…</p></main>;
   }
 
   const updateAmount = (key: AmountKey, value: string) => setForm({ ...form, amounts: { ...form.amounts, [key]: value } });
@@ -199,7 +199,7 @@ export function SettingsForm() {
   return (
     <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10">
       <form onSubmit={submit} className="relative mx-auto grid max-w-5xl gap-6 pb-28 sm:pb-20">
-        <div><HomeLink /></div>
+        <div><HomeLink href="/profile" label="返回用户信息" /></div>
         <header className="mb-2 max-w-3xl py-2">
           <p className="page-kicker">个人配置</p>
           <h1 className="page-heading mt-4 text-4xl">资金与偏好设置</h1>

@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { mergeMealRequests, parseMealRequest } from "./parse-meal-request";
 
 describe("parse_meal_request", () => {
+  it("去掉想吃内容前面的泛量词", () => {
+    expect(parseMealRequest("我想吃一些咖喱，给我一些价格建议").preferredTerms).toContain("咖喱");
+  });
+
+  it.each([
+    ["我想尝试一些日料，给我价格建议", "日料"],
+    ["想试试烧烤，有什么推荐", "烧烤"],
+    ["想尝尝轻食，价格多少合适", "轻食"],
+  ])("泛化提取尝试类表达：%s", (message, expected) => {
+    expect(parseMealRequest(message).preferredTerms).toContain(expected);
+  });
+
   it("提取价格、口味和距离约束", () => {
     expect(parseMealRequest("想吃清淡的面，15元以内，最好离我近一点")).toMatchObject({
       hardPriceLimitCents: 1_500,

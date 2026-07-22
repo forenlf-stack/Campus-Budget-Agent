@@ -74,7 +74,7 @@ export function BuyOrNotClient() {
     finally { setRecording(false); }
   }
 
-  return <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-3xl">
+  return <main className="app-page meal-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-3xl">
     <HomeLink />
     <header className="mt-8 max-w-2xl"><p className="page-kicker">消费前决策</p><h1 className="page-heading mt-4 text-4xl">零食饮料买不买？</h1><p className="mt-3 text-sm leading-7 text-slate-600">输入这次想买的东西和价格，Agent 会结合近 7 天频率、偏好上限和总预算给出建议。</p></header>
     <form onSubmit={evaluate} className="surface-card mt-8 grid gap-5 rounded-[2rem] p-6 sm:grid-cols-2 sm:p-7">

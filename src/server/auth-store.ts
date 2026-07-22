@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSa
 import { promisify } from "node:util";
 
 import type { AuthUser, LoginInput, RegisterInput } from "@/lib/auth";
+import type { AccountProfile, AccountProfileInput } from "@/lib/profile";
 import { openDatabase } from "@/server/database";
 
 const scrypt = promisify(scryptCallback);
@@ -77,6 +78,40 @@ export async function authenticateUser(input: LoginInput): Promise<AuthUser | nu
     const row = database.prepare(`SELECT "id", "displayName", "email", "passwordHash" FROM "UserProfile" WHERE lower("email") = lower(?)`).get(input.email) as Record<string, unknown> | undefined;
     if (!row || !await verifyPassword(input.password, String(row.passwordHash))) return null;
     return userFromRow(row);
+  } finally { database.close(); }
+}
+
+export function readAccountProfile(userId: string): AccountProfile {
+  const database = openDatabase();
+  try {
+    const row = database.prepare(`SELECT "id", "displayName", "email", "phone" FROM "UserProfile" WHERE "id" = ?`).get(userId) as Record<string, unknown> | undefined;
+    if (!row) throw new Error("账户不存在");
+    return { id: String(row.id), displayName: String(row.displayName), email: String(row.email), phone: String(row.phone ?? "") };
+  } finally { database.close(); }
+}
+
+export function updateAccountProfile(userId: string, input: AccountProfileInput): AccountProfile {
+  const database = openDatabase();
+  try {
+    const duplicate = database.prepare(`SELECT "id" FROM "UserProfile" WHERE lower("email") = lower(?) AND "id" <> ?`).get(input.email, userId);
+    if (duplicate) throw new Error("该邮箱已被其他账户使用");
+    const now = new Date().toISOString();
+    const result = database.prepare(`UPDATE "UserProfile" SET "displayName" = ?, "email" = ?, "phone" = ?, "updatedAt" = ? WHERE "id" = ?`)
+      .run(input.displayName, input.email, input.phone, now, userId);
+    if (result.changes === 0) throw new Error("账户不存在");
+    return { id: userId, ...input };
+  } finally { database.close(); }
+}
+
+export async function changeAccountPassword(userId: string, currentPassword: string, newPassword: string) {
+  const database = openDatabase();
+  try {
+    const row = database.prepare(`SELECT "passwordHash" FROM "UserProfile" WHERE "id" = ?`).get(userId) as Record<string, unknown> | undefined;
+    if (!row) throw new Error("账户不存在");
+    if (!await verifyPassword(currentPassword, String(row.passwordHash))) throw new Error("当前密码不正确");
+    const nextHash = await hashPassword(newPassword);
+    database.prepare(`UPDATE "UserProfile" SET "passwordHash" = ?, "updatedAt" = ? WHERE "id" = ?`)
+      .run(nextHash, new Date().toISOString(), userId);
   } finally { database.close(); }
 }
 

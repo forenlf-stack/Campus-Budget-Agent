@@ -113,8 +113,8 @@ export function MealCandidatesClient() {
   }
 
   return (
-    <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto grid max-w-6xl gap-6">
-      <div><HomeLink /></div><header className="max-w-3xl py-2"><p className="page-kicker">个人资料库</p><h1 className="page-heading mt-4 text-4xl">个人餐饮候选库</h1><p className="mt-3 text-sm leading-7 text-slate-600">只维护你吃过或愿意选择的餐食；停用不会删除历史数据。</p></header>
+    <main className="app-page meal-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto grid max-w-6xl gap-6">
+      <div><HomeLink href="/profile" label="返回用户信息" /></div><header className="max-w-3xl py-2"><p className="page-kicker">个人资料库</p><h1 className="page-heading mt-4 text-4xl">个人餐饮候选库</h1><p className="mt-3 text-sm leading-7 text-slate-600">只维护你吃过或愿意选择的餐食；停用不会删除历史数据。</p></header>
       <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"><div className="flex justify-between"><h2 className="font-semibold">{editingId ? "编辑餐食" : "添加餐食"}</h2>{editingId && <button onClick={() => { setEditingId(null); setForm(emptyForm); }} className="text-sm text-slate-500">取消编辑</button>}</div><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <label className="grid gap-1 text-sm">餐食名称<input className={inputClass} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
         <label className="grid gap-1 text-sm">商家或档口<input className={inputClass} value={form.merchant} onChange={(event) => setForm({ ...form, merchant: event.target.value })} /></label>

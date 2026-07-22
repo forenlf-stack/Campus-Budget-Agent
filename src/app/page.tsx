@@ -15,8 +15,6 @@ const links = [
   { href: "/transactions", icon: "账", tone: "from-sky-600 to-cyan-400", title: "收支记录", description: "查看和维护日常交易" },
   { href: "/transaction-imports", icon: "导", tone: "from-violet-600 to-fuchsia-400", title: "导入交易记录", description: "从文字、截图或 Excel 预览并导入账单" },
   { href: "/bill-analysis", icon: "析", tone: "from-indigo-600 to-blue-400", title: "账单分析与建议", description: "查看消费结构、周期变化和 Agent 建议" },
-  { href: "/settings/preferences", icon: "设", tone: "from-slate-700 to-slate-500", title: "预算与偏好", description: "设置预算、地点、口味与忌口" },
-  { href: "/meal-candidates", icon: "库", tone: "from-rose-500 to-orange-400", title: "餐食候选", description: "维护吃过或愿意选择的餐食" },
 ];
 
 function signedYuan(cents: number) {
@@ -37,7 +35,7 @@ export default async function Home() {
   const categoryTotal = categoryRows.reduce((total, item) => total + item.netSpendingCents, 0);
 
   return <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-6xl">
-    <header className="flex items-start justify-between gap-4"><div><p className="page-kicker">学生消费助手</p><h1 className="page-heading mt-5 text-4xl sm:text-5xl">轻量决策，<span className="bg-gradient-to-r from-indigo-600 to-teal-600 bg-clip-text text-transparent">从今天开始。</span></h1><p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">把预算、账单与日常选择放在一起，需要时快速得到清晰、可执行的参考。</p><Link href="/settings/models" className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-100">模型设置 <span aria-hidden="true">→</span></Link></div><UserMenu user={user} /></header>
+    <header className="flex items-start justify-between gap-4"><div><p className="page-kicker">学生消费助手</p><h1 className="page-heading mt-5 text-4xl sm:text-5xl">轻量决策，<span className="bg-gradient-to-r from-orange-600 to-teal-600 bg-clip-text text-transparent">从今天开始。</span></h1><p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">把预算、账单与日常选择放在一起，需要时快速得到清晰、可执行的参考。</p></div><UserMenu user={user} /></header>
 
     <section className="surface-card mt-10 overflow-hidden rounded-[2rem] p-6 sm:p-8" aria-labelledby="budget-dashboard-title">
       <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm font-semibold text-teal-700">{period} 预算执行</p><h2 id="budget-dashboard-title" className="mt-1 text-2xl font-bold">当前预算仪表盘</h2></div><Link href="/transactions" className="text-sm font-semibold text-teal-700 underline-offset-4 hover:underline">查看收支明细</Link></div>

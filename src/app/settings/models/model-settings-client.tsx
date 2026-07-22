@@ -99,12 +99,12 @@ export function ModelSettingsClient() {
     finally { setBusy(""); }
   }
 
-  if (!form) return <main className="app-page p-8"><HomeLink /><p className="mt-16 text-center text-sm text-slate-500">正在加载模型配置…</p></main>;
+  if (!form) return <main className="app-page p-8"><HomeLink href="/profile" label="返回用户信息" /><p className="mt-16 text-center text-sm text-slate-500">正在加载模型配置…</p></main>;
 
   const statusBadge = (configured: boolean) => <span className={`rounded-full px-3 py-1 text-xs ${configured ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-stone-600"}`}>{configured ? "已配置" : "未配置"}</span>;
 
   return <main className="app-page px-4 py-8 text-slate-900 sm:px-6 sm:py-10"><div className="relative mx-auto max-w-5xl">
-    <HomeLink />
+    <HomeLink href="/profile" label="返回用户信息" />
     <header className="mt-8 max-w-3xl"><p className="page-kicker">本地服务端配置</p><h1 className="page-heading mt-4 text-4xl">模型与菜单识别</h1><p className="mt-3 text-sm leading-7 text-slate-600">多模态模型直接读取菜单原图；DeepSeek 负责理解自然语言需求。预算计算、忌口过滤与记账仍由本地代码控制。</p></header>
     <section className="mt-8 rounded-[2rem] border border-sky-200 bg-gradient-to-br from-sky-50 to-indigo-50 p-6 shadow-[0_12px_38px_rgba(14,165,233,0.08)]">
       <div className="flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-sky-700">推荐主流程</p><h2 className="mt-1 text-xl font-bold">OpenAI 兼容多模态菜单模型</h2></div>{statusBadge(Boolean(status?.visionConfigured))}</div>

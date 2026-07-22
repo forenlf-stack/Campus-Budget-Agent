@@ -1,13 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f7f4;
+  --background: #faf8f4;
   --foreground: #0f172a;
   --surface: #ffffff;
   --line: #e7e5e4;
   --muted: #64748b;
-  --brand: #4f46e5;
-  --brand-dark: #312e81;
+  --brand: #ea580c;
+  --brand-dark: #9a3412;
   --accent: #0f766e;
 }
 
@@ -27,8 +27,8 @@ body {
 }
 
 ::selection {
-  background: #c7d2fe;
-  color: #1e1b4b;
+  background: #fed7aa;
+  color: #7c2d12;
 }
 
 button,
@@ -68,20 +68,20 @@ textarea {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: #818cf8 !important;
-  box-shadow: 0 0 0 4px rgb(99 102 241 / 0.12);
+  border-color: #fb923c !important;
+  box-shadow: 0 0 0 4px rgb(249 115 22 / 0.12);
 }
 
 input:hover:not(:disabled),
 select:hover:not(:disabled),
 textarea:hover:not(:disabled) {
-  border-color: #c7d2fe;
+  border-color: #fed7aa;
 }
 
 button:focus-visible,
 a:focus-visible,
 summary:focus-visible {
-  outline: 2px solid #6366f1;
+  outline: 2px solid #ea580c;
   outline-offset: 3px;
 }
 
@@ -91,9 +91,10 @@ summary:focus-visible {
   overflow-x: clip;
   isolation: isolate;
   background:
-    radial-gradient(circle at 7% 2%, rgb(99 102 241 / 0.10), transparent 28rem),
-    radial-gradient(circle at 92% 5%, rgb(20 184 166 / 0.08), transparent 25rem),
-    #f7f7f4;
+    radial-gradient(circle at 7% 2%, rgb(249 115 22 / 0.09), transparent 28rem),
+    radial-gradient(circle at 92% 5%, rgb(13 148 136 / 0.08), transparent 25rem),
+    linear-gradient(180deg, #fffdf9 0%, #faf8f4 55%, #f8faf9 100%);
+  padding-bottom: calc(7rem + env(safe-area-inset-bottom)) !important;
 }
 
 .app-page::before {
@@ -102,18 +103,31 @@ summary:focus-visible {
   position: absolute;
   inset: 0 0 auto;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(99 102 241 / 0.35), transparent);
+  background: linear-gradient(90deg, transparent, rgb(249 115 22 / 0.32), rgb(13 148 136 / 0.25), transparent);
+}
+
+.app-page::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  opacity: 0.42;
+  background-image: radial-gradient(circle, rgb(15 118 110 / 0.12) 1.2px, transparent 1.2px);
+  background-position: calc(100% - 36px) 140px;
+  background-size: 22px 22px;
+  mask-image: linear-gradient(110deg, transparent 0 58%, black 82%, transparent 100%);
 }
 
 .page-kicker {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  border: 1px solid #e0e7ff;
+  border: 1px solid #fed7aa;
   border-radius: 9999px;
-  background: rgb(238 242 255 / 0.82);
+  background: rgb(255 247 237 / 0.88);
   padding: 0.38rem 0.75rem;
-  color: #4338ca;
+  color: #c2410c;
   font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -141,8 +155,39 @@ summary:focus-visible {
 }
 
 .surface-card:hover {
-  border-color: rgb(199 210 254 / 0.9);
-  box-shadow: 0 16px 44px rgb(79 70 229 / 0.075);
+  border-color: rgb(254 215 170 / 0.95);
+  box-shadow: 0 16px 44px rgb(194 65 12 / 0.075);
+}
+
+.meal-page {
+  background:
+    radial-gradient(circle at 8% 6%, rgb(251 146 60 / 0.20), transparent 25rem),
+    radial-gradient(circle at 94% 18%, rgb(244 63 94 / 0.10), transparent 24rem),
+    radial-gradient(circle at 72% 82%, rgb(250 204 21 / 0.10), transparent 22rem),
+    linear-gradient(155deg, #fffaf2 0%, #fff7ed 45%, #fffdf8 100%);
+}
+
+.meal-page::after {
+  opacity: 0.68;
+  background-image:
+    radial-gradient(circle, rgb(234 88 12 / 0.16) 1.5px, transparent 1.5px),
+    radial-gradient(circle at center, transparent 54%, rgb(251 146 60 / 0.13) 56% 61%, transparent 63%);
+  background-position: 28px 42px, calc(100% - 50px) 210px;
+  background-size: 20px 20px, 180px 180px;
+  mask-image: linear-gradient(100deg, black 0%, transparent 38%, transparent 62%, black 100%);
+}
+
+.meal-page .page-kicker {
+  border-color: #fdba74;
+  background: rgb(255 237 213 / 0.9);
+  color: #c2410c;
+}
+
+.profile-page {
+  background:
+    radial-gradient(circle at 10% 5%, rgb(251 146 60 / 0.16), transparent 28rem),
+    radial-gradient(circle at 90% 12%, rgb(139 92 246 / 0.10), transparent 24rem),
+    linear-gradient(160deg, #fffaf5, #faf8f4 52%, #f5f3ff);
 }
 
 .soft-grid {
@@ -165,11 +210,11 @@ summary:focus-visible {
 }
 
 .app-page :where(section, article)[class~="bg-white"]:hover {
-  border-color: rgb(199 210 254 / 0.9);
+  border-color: rgb(254 215 170 / 0.9);
 }
 
 .app-page table thead {
-  background: linear-gradient(90deg, #0f172a, #1e1b4b);
+  background: linear-gradient(90deg, #172033, #29364e);
   color: white;
 }
 
@@ -178,7 +223,7 @@ summary:focus-visible {
 }
 
 .app-page table tbody tr:hover {
-  background-color: rgb(238 242 255 / 0.45);
+  background-color: rgb(255 247 237 / 0.65);
 }
 
 .data-scroll {
@@ -202,7 +247,67 @@ summary:focus-visible {
 }
 
 .safe-sticky-action {
-  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+
+.bottom-navigation {
+  position: fixed;
+  z-index: 60;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 0.65rem 1rem calc(0.65rem + env(safe-area-inset-bottom));
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgb(250 248 244 / 0.88) 45%);
+}
+
+.bottom-navigation__inner {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  width: min(100%, 25rem);
+  margin: 0 auto;
+  padding: 0.38rem;
+  pointer-events: auto;
+  border: 1px solid rgb(255 255 255 / 0.92);
+  border-radius: 1.5rem;
+  background: rgb(255 255 255 / 0.88);
+  box-shadow: 0 16px 48px rgb(15 23 42 / 0.16), inset 0 0 0 1px rgb(231 229 228 / 0.7);
+  backdrop-filter: blur(18px);
+}
+
+.bottom-navigation__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 3.1rem;
+  border-radius: 1.15rem;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.bottom-navigation__item:hover {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.bottom-navigation__item.is-active {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+  color: white;
+  box-shadow: 0 8px 20px rgb(234 88 12 / 0.25);
+}
+
+.bottom-navigation__icon {
+  display: grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 0.65rem;
+  background: rgb(255 255 255 / 0.15);
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 @media (max-width: 640px) {

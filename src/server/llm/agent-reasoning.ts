@@ -6,25 +6,33 @@ import type { SnackDecisionInput, SnackDecisionResponse } from "@/lib/snack-deci
 import { callDeepSeekJson } from "./deepseek-client";
 
 export const interpretedMealRequestSchema = z.object({
-  quickTags: z.array(z.enum(mealRecommendationQuickTags)).max(mealRecommendationQuickTags.length).default([]),
-  hardPriceLimitCents: z.coerce.number().int().positive().nullable().default(null),
-  targetPriceCents: z.coerce.number().int().positive().nullable().default(null),
+  quickTags: z.array(z.enum(mealRecommendationQuickTags)).max(mealRecommendationQuickTags.length),
+  hardPriceLimitCents: z.number().int().positive().nullable(),
+  targetPriceCents: z.number().int().positive().nullable(),
   preferredTerms: z.array(z.string().trim().min(1).max(agentCapabilities.languageUnderstanding.maximumTermCharacters))
-    .max(agentCapabilities.languageUnderstanding.maximumPreferenceTerms).default([]),
+    .max(agentCapabilities.languageUnderstanding.maximumPreferenceTerms),
   avoidedTerms: z.array(z.string().trim().min(1).max(agentCapabilities.languageUnderstanding.maximumTermCharacters))
-    .max(agentCapabilities.languageUnderstanding.maximumPreferenceTerms).default([]),
+    .max(agentCapabilities.languageUnderstanding.maximumPreferenceTerms),
   strictAvoidedTerms: z.array(z.string().trim().min(1).max(agentCapabilities.languageUnderstanding.maximumTermCharacters))
-    .max(agentCapabilities.languageUnderstanding.maximumPreferenceTerms).default([]),
+    .max(agentCapabilities.languageUnderstanding.maximumPreferenceTerms),
   understanding: z.string().trim().min(1).max(400),
   response: z.string().trim().min(1).max(600),
-}).passthrough();
+}).strict();
 
 export type InterpretedMealRequest = z.infer<typeof interpretedMealRequestSchema>;
 
 export async function interpretMealRequestWithLlm(text: string): Promise<InterpretedMealRequest | null> {
   if (!text.trim()) return null;
   return callDeepSeekJson(
-    "你是餐食决策 Agent。完整理解用户的自然语言，不要把能力限制在快捷标签中。提取明确条件，但不得补充用户没说过的食物、价格或忌口。金额转换为整数分。只有用户明确表达过敏、绝对不能吃或严格禁忌时才写入 strictAvoidedTerms；普通的‘不太想吃、避开、少一点’写入 avoidedTerms，作为强偏好而不是安全阻断。quickTags只能使用 SAVE_MONEY, TRY_DIFFERENT, LIGHT, SPICY, STAY_NEAR，它们只是辅助信号。understanding说明你理解的目标和取舍；response说明将如何结合预算、偏好、地点和历史进行权衡。只返回JSON。",
+    `你是餐食决策 Agent。只返回一个严格符合下述结构的完整 JSON 对象，不得省略字段、改字段名或增加字段：
+{"quickTags":[],"hardPriceLimitCents":null,"targetPriceCents":null,"preferredTerms":[],"avoidedTerms":[],"strictAvoidedTerms":[],"understanding":"...","response":"..."}
+金额必须转换为整数分；用户没有明确金额时对应字段必须是 null。不得补充用户未说过的食物、价格、偏好或忌口。
+hardPriceLimitCents 只表示“不超过、以内、最多、封顶”等硬上限；“20元左右”只能写 targetPriceCents=2000。
+只有用户明确表达过敏、不能吃、绝对不吃、严禁或忌口时，才写入 strictAvoidedTerms；词语必须尽量原样摘自用户输入，不要翻译（例如用户说“花生过敏”，必须写“花生”，不能写“peanut”）。
+“不想吃、不太想吃、不怎么想吃、少一点、避开”写入 avoidedTerms；不得同时写入 preferredTerms，也不得启用相反的快捷标签。例如“不太想吃辣”必须 avoidedTerms=["辣"] 且 quickTags 不含 SPICY。
+quickTags 只能取 SAVE_MONEY、TRY_DIFFERENT、LIGHT、SPICY、STAY_NEAR。understanding 简要说明已理解的目标；response 简要说明如何权衡。
+示例一：输入“15元以内的清淡午餐，花生过敏”时，hardPriceLimitCents=1500、targetPriceCents=null、quickTags=["LIGHT"]、strictAvoidedTerms=["花生"]。
+示例二：输入“不太想吃辣，20元左右”时，hardPriceLimitCents=null、targetPriceCents=2000、avoidedTerms=["辣"]、quickTags 不含 SPICY。`,
     text,
     interpretedMealRequestSchema,
     { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },

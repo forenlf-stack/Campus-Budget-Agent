@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { agentCapabilities } from "@/lib/agent-capabilities";
+import { parseMenuText } from "@/lib/menu-text";
 import {
-  menuCandidateSchema,
   menuMealRecommendationInputSchema,
   menuMealRecommendationResponseSchema,
   type MenuCandidate,
@@ -18,12 +18,9 @@ import { getRecentMealConsumption } from "@/server/skills/get-recent-meal-consum
 import { rankMealCandidates } from "@/server/skills/rank-meal-candidates";
 import type { RetrievedMealCandidate } from "@/server/skills/retrieve-meal-candidates";
 import { simulateBudgetImpact } from "@/server/skills/simulate-budget-impact";
-import { parseMealRequest } from "@/server/skills/parse-meal-request";
+import { mergeMealRequests, parseMealRequest } from "@/server/skills/parse-meal-request";
 import { interpretMealRequestWithLlm } from "@/server/llm/agent-reasoning";
 import { shanghaiMealPeriod } from "./fixed-meal-recommendation";
-
-const ambiguousPricePattern = /(?:会员价|会员专享|起售价?|起步价|价格?起|任选|选规格|选套餐|多规格|不同规格|[~～])/i;
-const explicitPricePattern = /(?:¥|￥)?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)/g;
 
 export type MenuMealRecommendationResult =
   | { success: true; data: MenuMealRecommendationResponse }
@@ -76,37 +73,6 @@ function recognitionSummary(source: "image" | "menuText", candidates: MenuCandid
     rejectedCount: rejectedCandidateCount,
     warnings,
   };
-}
-
-function parseMenuText(menuText: string): MenuCandidate[] {
-  return menuText.split(/\r?\n/).flatMap((rawLine, index): MenuCandidate[] => {
-    const line = rawLine.trim();
-    if (!line) return [];
-    const matches = [...line.matchAll(explicitPricePattern)];
-    const ambiguous = ambiguousPricePattern.test(line) || matches.length !== 1;
-    const priceMatch = matches.length === 1 ? matches[0] : undefined;
-    const name = priceMatch
-      ? line.slice(0, priceMatch.index).replace(/[\s:：.。·\-—]+$/, "").trim()
-      : line.replace(/[\s:：.。·\-—]+$/, "").trim();
-    if (!name || (!priceMatch && !ambiguousPricePattern.test(line))) return [];
-    const yuan = priceMatch ? Number(priceMatch[1]) : Number.NaN;
-    const priceCents = !ambiguous && Number.isFinite(yuan) && yuan > 0 && Number.isSafeInteger(Math.round(yuan * 100))
-      ? Math.round(yuan * 100)
-      : null;
-    return [menuCandidateSchema.parse({
-      temporaryId: `text-${index + 1}`,
-      name,
-      priceCents,
-      priceText: priceMatch?.[0].trim() ?? null,
-      description: null,
-      visibleTags: [],
-      confidence: priceCents === null ? 0.5 : 1,
-      source: "MENU_TEXT",
-      rawTextReference: line,
-      needsConfirmation: priceCents === null,
-      risks: priceCents === null ? ["PRICE_UNCERTAIN"] : [],
-    })];
-  });
 }
 
 function applyConfirmedPrices(candidates: MenuCandidate[], confirmedPrices: Array<{ temporaryId: string; priceCents: number }>) {
@@ -217,6 +183,7 @@ export async function runMenuMealRecommendation(
     }),
   });
   if (candidates.length === 0) return emptyResponse("NO_MENU_CONTENT");
+  if (candidates.length < 2) return emptyResponse("INSUFFICIENT_MENU_CONTENT");
   const contextStartedAt = performance.now();
   const financial = dependencies.getFinancialContext({ queryDate }, dependencies.store);
   if (!financial.success) return { success: false, runId, error: financial.error };
@@ -229,19 +196,12 @@ export async function runMenuMealRecommendation(
     return { success: false, runId, error: { code: "PREFERENCE_CONTEXT_ERROR", message: error instanceof Error ? error.message : "读取长期偏好失败" } };
   }
   const contextMs = elapsed(contextStartedAt);
-  let naturalRequest = parseMealRequest(parsed.data.userRequest);
+  const localRequest = parseMealRequest(parsed.data.userRequest);
+  let naturalRequest = localRequest;
   if (!parsed.data.skipAgentInterpretation) {
     try {
       const interpreted = await interpretMealRequestWithLlm(parsed.data.userRequest);
-      if (interpreted) naturalRequest = {
-        quickTags: interpreted.quickTags,
-        historyQuery: null,
-        preferredTerms: interpreted.preferredTerms,
-        avoidedTerms: interpreted.avoidedTerms,
-        strictAvoidedTerms: interpreted.strictAvoidedTerms,
-        ...(interpreted.hardPriceLimitCents ? { hardPriceLimitCents: interpreted.hardPriceLimitCents } : {}),
-        ...(interpreted.targetPriceCents ? { targetPriceCents: interpreted.targetPriceCents } : {}),
-      };
+      if (interpreted) naturalRequest = mergeMealRequests(localRequest, interpreted, parsed.data.userRequest);
     } catch { /* Keep menu recommendation available without the LLM. */ }
   }
   const quickTags = unique([...parsed.data.quickTags, ...naturalRequest.quickTags]);

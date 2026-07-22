@@ -50,4 +50,18 @@ describe("POST /api/meal-recommendations/direct", () => {
     expect(response.status).toBe(400);
     expect(payload.error.code).toBe("VALIDATION_ERROR");
   });
+
+  it("候选库没有用户想吃的具体餐食时明确标注备选而不谎称命中", async () => {
+    const request = new Request("http://localhost/api/meal-recommendations/direct", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userRequest: "25元以内想吃咖喱，推荐", skipAgentInterpretation: true }),
+    });
+    const response = await POST(request as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.agentResponse.response).toContain("没有包含“咖喱”的选项");
+    expect(payload.agentResponse.response).toContain("并非该类餐食");
+  });
 });

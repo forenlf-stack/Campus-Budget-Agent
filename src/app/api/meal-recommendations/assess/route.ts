@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { agentCapabilities } from "@/lib/agent-capabilities";
 import { mealPlanAssessmentInputSchema, mealPlanAssessmentResponseSchema } from "@/lib/meal-plan-assessment";
-import { centsToYuan } from "@/lib/money";
+import { parseMentionedPriceCents } from "@/lib/meal-input-routing";
+import { centsToYuan, signedCentsToYuan } from "@/lib/money";
 import { callDeepSeekJson } from "@/server/llm/deepseek-client";
 import { createSkillReadStore } from "@/server/skill-read-store";
 import { requireApiUser } from "@/server/auth";
@@ -13,34 +14,14 @@ import { simulateBudgetImpact } from "@/server/skills/simulate-budget-impact";
 
 export const runtime = "nodejs";
 
-const copySchema = z.object({ reply: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters) }).passthrough();
-
-const chineseDigits: Record<string, number> = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
-
-function chineseNumber(value: string): number {
-  if (value === "十") return 10;
-  if (value.includes("十")) {
-    const [tens, ones] = value.split("十");
-    return (tens ? chineseDigits[tens] ?? 0 : 1) * 10 + (ones ? chineseDigits[ones] ?? 0 : 0);
-  }
-  if (value.includes("百")) {
-    const [hundreds, rest] = value.split("百");
-    return (chineseDigits[hundreds] ?? 1) * 100 + (rest ? chineseNumber(rest) : 0);
-  }
-  return chineseDigits[value] ?? Number.NaN;
-}
-
-function extractPriceCents(description: string) {
-  const matches = [...description.matchAll(/(?:总共|总价|一共|花了|价格|预算)?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)/g)];
-  const match = matches.at(-1) ?? description.match(/(?:总共|总价|一共|花了|价格)?\s*(\d+(?:\.\d{1,2})?)\s*$/);
-  const chineseMatch = description.match(/([一二两三四五六七八九十百]+)\s*(?:元|块)/);
-  const yuan = match ? Number(match[1]) : chineseMatch ? chineseNumber(chineseMatch[1]) : Number.NaN;
-  const cents = Math.round(yuan * 100);
-  return Number.isFinite(yuan) && cents > 0 && Number.isSafeInteger(cents) ? cents : null;
-}
+const unsupportedAssessmentClaims = /(?:配料|食材|荤素|油腻|油润|清淡|辣度|辛辣|营养|热量|蛋白质|维生素|蔬菜|肉类|鱼类|豆制品|鸡肉类|口味结构|膳食)/;
+const copySchema = z.object({
+  reply: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters)
+    .refine((reply) => !unsupportedAssessmentClaims.test(reply), "模型回复包含本地事实无法支持的餐食断言"),
+}).strict();
 
 export function isMealPlanAssessmentRequest(text: string) {
-  return extractPriceCents(text) !== null && /(?:怎么样|合适|值不值|划算|能不能|可以吗|建议|评价|认为|准备吃|打算吃|这一顿|这顿)/.test(text);
+  return parseMentionedPriceCents(text) !== null && /(?:怎么样|合适|值不值|划算|能不能|可以吗|建议|评价|认为|准备吃|打算吃|这一顿|这顿)/.test(text);
 }
 
 export async function POST(request: NextRequest) {
@@ -48,7 +29,7 @@ export async function POST(request: NextRequest) {
     const user = await requireApiUser();
     const store = createSkillReadStore(user.id);
     const input = mealPlanAssessmentInputSchema.parse(await request.json());
-    const priceCents = extractPriceCents(input.description);
+    const priceCents = parseMentionedPriceCents(input.description);
     if (!priceCents) return NextResponse.json({ error: { code: "PRICE_REQUIRED", message: "请在描述中提供这顿饭的总价，例如“总共31元”" } }, { status: 400 });
     const now = new Date();
     const financial = getFinancialContext({ queryDate: now }, store);
@@ -69,16 +50,16 @@ export async function POST(request: NextRequest) {
     const title = level === "POSITIVE" ? "这顿整体合适" : level === "CAUTION" ? "可以吃，但价格偏高" : "建议再想想或适当减量";
     const reasons = [
       `本次总价 ¥${centsToYuan(priceCents)}，建议正餐价约 ¥${centsToYuan(financial.data.recommendedLunchPriceCents)}`,
-      recent.data.mealCount > 0 ? `近7天正餐 ${recent.data.mealCount} 次，最近几次平均 ¥${centsToYuan(recent.data.recentAveragePriceCents)}` : "近7天暂无可比较的正餐记录",
-      `购买后本月预算预计剩余 ¥${centsToYuan(impact.data.remainingBudgetAfterCents)}`,
+      recent.data.mealCount > 0 ? `近14天正餐 ${recent.data.mealCount} 次，最近几次净均价 ¥${centsToYuan(recent.data.recentAveragePriceCents)}` : "近14天暂无可比较的正餐记录",
+      `购买后本月预算预计剩余 ¥${signedCentsToYuan(impact.data.remainingBudgetAfterCents)}`,
     ];
-    const facts = { userPlan: input.description, assessment: { level, title, reasons }, recentMeals: recent.data.recentMeals.map((item) => ({ name: item.name, priceYuan: centsToYuan(item.amountCents) })) };
+    const facts = { assessment: { level, title, reasons } };
     let reply = `${title}。${reasons.join("；")}。`;
     let source: "LLM" | "RULES" = "RULES";
     let fallbackReason: string | undefined;
     try {
       const copy = await callDeepSeekJson(
-        "你是餐食方案评价 Agent。用户已经给出了想吃的具体方案和总价，不要另行推荐历史候选。根据可信事实评价口味结构、价格是否合适，并给出肯定、适度调整或再想想的建议。可以讨论荤素搭配、油辣程度和分量，但不得断言用户未提供的具体配料或营养数据，不得修改任何金额和等级。回复2到4句自然中文，只返回JSON，字段为reply。",
+        "你是餐食价格与预算评价 Agent。只能复述输入 JSON 中 assessment 已明确给出的价格、近14天次数与净均价、预算结果、等级和标题，并据此给出肯定、适度控制价格或再想想的建议。不得评价或猜测配料、食材、荤素、油辣、营养、热量、口味结构、分量或近期吃过的具体食材；不得补充任何输入中没有的事实，不得修改任何金额、时间范围和等级，不得另行推荐餐食。回复2到4句自然中文，只返回严格 JSON 对象，且只能有 reply 字段。",
         JSON.stringify(facts),
         copySchema,
         { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },

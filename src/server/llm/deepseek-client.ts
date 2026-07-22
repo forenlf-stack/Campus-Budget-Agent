@@ -15,6 +15,7 @@ export interface DeepSeekCallOptions {
   timeoutMs?: number;
   thinking?: "enabled" | "disabled";
   retries?: number;
+  retryDelayMs?: number;
   fetchImplementation?: typeof fetch;
 }
 
@@ -23,12 +24,32 @@ export interface DeepSeekMessage {
   content: string;
 }
 
+class DeepSeekHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`DeepSeek 返回 ${status}`);
+    this.name = "DeepSeekHttpError";
+  }
+}
+
+function isRetryableError(error: unknown) {
+  if (error instanceof DeepSeekHttpError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  if (error instanceof SyntaxError || error instanceof z.ZodError) return false;
+  return error instanceof Error && (error.name === "AbortError" || error instanceof TypeError || /network|fetch|timeout|timed out/i.test(error.message));
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 export async function callDeepSeekMessagesJson<T>(messages: DeepSeekMessage[], schema: z.ZodType<T>, options: DeepSeekCallOptions = {}): Promise<T> {
   const config = readModelConfig();
   if (!config.deepseekApiKey) throw new Error("DeepSeek 尚未配置");
   const timeoutMs = options.timeoutMs ?? agentCapabilities.model.defaultTimeoutMs;
   const thinking = options.thinking ?? "disabled";
   const retries = Math.max(0, Math.min(options.retries ?? 1, 2));
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 250);
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
@@ -46,7 +67,7 @@ export async function callDeepSeekMessagesJson<T>(messages: DeepSeekMessage[], s
         }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`DeepSeek 返回 ${response.status}`);
+      if (!response.ok) throw new DeepSeekHttpError(response.status);
       const message = completionSchema.parse(await response.json()).choices[0].message;
       const content = message.content ?? message.reasoning_content;
       if (!content) throw new Error("DeepSeek 未返回可解析内容");
@@ -54,9 +75,11 @@ export async function callDeepSeekMessagesJson<T>(messages: DeepSeekMessage[], s
       return schema.parse(JSON.parse(normalized));
     } catch (error) {
       lastError = error;
+      if (attempt >= retries || !isRetryableError(error)) throw error;
     } finally {
       clearTimeout(timeout);
     }
+    if (retryDelayMs > 0) await wait(retryDelayMs * (attempt + 1));
   }
   throw lastError instanceof Error ? lastError : new Error("DeepSeek 调用失败");
 }

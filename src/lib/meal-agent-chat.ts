@@ -5,7 +5,9 @@ import { mealRecommendationCardSchema, mealRecommendationQuickTags } from "@/lib
 
 export const mealAgentMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
-  content: z.string().trim().min(1).max(agentCapabilities.conversation.maximumReplyCharacters),
+  // 历史中既包含 Agent 回复，也包含长度上限更高的用户输入。
+  // 若按回复上限校验，1601～2000 字的合法用户消息会导致下一轮对话失败。
+  content: z.string().trim().min(1).max(agentCapabilities.conversation.maximumMessageCharacters),
 }).strict();
 
 export const mealAgentChatInputSchema = z.object({

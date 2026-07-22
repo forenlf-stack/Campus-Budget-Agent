@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { type BudgetTransaction } from "@/lib/budget";
 import type { SettingsInput } from "@/lib/settings";
@@ -68,6 +68,36 @@ describe("fixed meal recommendation workflow", () => {
   it("用户明确价格上限时仍严格过滤", () => {
     const result = run([candidate("costly", { typicalPriceCents: 2_501 })], { userRequest: "最多25元" });
     expect(result).toMatchObject({ success: true, data: { status: "NO_RECOMMENDATIONS", recommendations: [] } });
+  });
+
+  it("模型解释不得放宽本地识别出的价格上限", () => {
+    const result = run([candidate("sixteen", { typicalPriceCents: 1_600 })], {
+      userRequest: "15元以内的午餐",
+      interpretedRequest: {
+        quickTags: [], hardPriceLimitCents: 2_500, targetPriceCents: null,
+        preferredTerms: [], avoidedTerms: [], strictAvoidedTerms: [],
+        understanding: "理解价格要求", response: "进行推荐",
+      },
+    });
+    expect(result).toMatchObject({ success: true, data: { status: "NO_RECOMMENDATIONS", recommendations: [] } });
+  });
+
+  it("模型虚构的忌口和偏好不得进入本地排序上下文", () => {
+    const rankMealCandidates = vi.fn().mockReturnValue({ success: true, data: { status: "NO_ELIGIBLE_CANDIDATES", filtered: [], recommendations: [] } });
+    run([candidate("a")], {
+      userRequest: "想吃米饭",
+      interpretedRequest: {
+        quickTags: [], hardPriceLimitCents: null, targetPriceCents: null,
+        preferredTerms: ["米饭", "模型虚构菜"], avoidedTerms: [], strictAvoidedTerms: ["beef"],
+        understanding: "理解偏好", response: "进行推荐",
+      },
+    }, { rankMealCandidates });
+    expect(rankMealCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      longTermPreferences: expect.objectContaining({
+        foodLikes: expect.not.arrayContaining(["模型虚构菜"]),
+        strictAvoidances: expect.not.arrayContaining(["beef"]),
+      }),
+    }));
   });
 
   it("换批优先排除上一批候选", () => {

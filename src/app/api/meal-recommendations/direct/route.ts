@@ -10,7 +10,7 @@ import {
 } from "@/lib/meal-recommendations";
 import { runFixedMealRecommendation } from "@/server/workflows/fixed-meal-recommendation";
 import { interpretMealRequestWithLlm } from "@/server/llm/agent-reasoning";
-import { parseMealRequest } from "@/server/skills/parse-meal-request";
+import { mergeMealRequests, parseMealRequest } from "@/server/skills/parse-meal-request";
 import { requireApiUser } from "@/server/auth";
 import { createSkillReadStore } from "@/server/skill-read-store";
 
@@ -48,6 +48,21 @@ export async function POST(request: NextRequest) {
     if (!result.success) return NextResponse.json({ error: result.error, durationMs }, { status: result.error.code === "INVALID_INPUT" ? 400 : 500 });
 
     const executionSteps = result.data.executionSteps.map(({ step, status }) => ({ step, status }));
+    const localRequest = parseMealRequest(input.userRequest);
+    const effectiveRequest = interpretedRequest
+      ? mergeMealRequests(localRequest, interpretedRequest, input.userRequest)
+      : localRequest;
+    const meaningfulPreferredTerms = effectiveRequest.preferredTerms.filter((term) => !/^(?:饭|餐|菜|食物|东西)$/.test(term));
+    const hasExactPreferredCandidate = meaningfulPreferredTerms.length === 0 || result.data.recommendations.some(({ candidate }) => {
+      const searchable = [candidate.name, candidate.merchant, candidate.location, ...candidate.tags].join(" ").toLowerCase();
+      return meaningfulPreferredTerms.some((term) => searchable.includes(term.toLowerCase()));
+    });
+    if (agentResponse && !hasExactPreferredCandidate) {
+      agentResponse = {
+        ...agentResponse,
+        response: `当前候选库暂时没有包含“${meaningfulPreferredTerms.join("、")}”的选项；下面展示的是符合价格和其他条件的备选，并非该类餐食。`,
+      };
+    }
     const recommendations: MealRecommendationCard[] = result.data.recommendations.map(({ candidate, ranking, budgetImpact }) => ({
       candidateId: candidate.id,
       name: candidate.name,

@@ -80,12 +80,12 @@ function fallbackResponse(input: z.infer<typeof mealAgentChatInputSchema>, reaso
   const reply = asksForChoice && best
     ? `如果现在就选，我更推荐${best.name}：本地综合评分最高，价格为¥${centsToYuan(best.priceCents)}，${best.risk === "暂无明显风险" ? "目前没有明显风险" : `需要注意${best.risk}`}。`
     : asksPriceStandard
-      ? `按你的当前设置，一顿正餐以¥${context.recommendedMealPriceYuan}左右较合适，¥${context.hardLimitYuan}以内通常仍可接受。你近7天最近几顿平均约¥${context.recentAverageYuan}，可以把这个作为更贴近实际习惯的参考。`
+      ? `按你的当前设置，一顿正餐以¥${context.recommendedMealPriceYuan}左右较合适，¥${context.hardLimitYuan}以内通常仍可接受。你近14天最近几顿净均价约¥${context.recentAverageYuan}，可以把这个作为更贴近实际习惯的参考。`
       : mentioned.length
         ? `你提到的${mentioned.map((item) => item.name).join("、")}中，我会优先按价格、风险和当前预算给出明确判断。`
     : needsNewRecommendation
       ? "我已提取到新的筛选偏好，可以按这些条件重新计算一批推荐。"
-      : `结合你当前剩余预算¥${context.remainingBudgetYuan}和近7天正餐均价¥${context.recentAverageYuan}，我可以直接评价你提出的具体餐食、价格或在现有候选中替你做选择。`;
+      : `结合你当前剩余预算¥${context.remainingBudgetYuan}和近14天正餐净均价¥${context.recentAverageYuan}，我可以直接评价你提出的具体餐食、价格或在现有候选中替你做选择。`;
   return mealAgentChatResponseSchema.parse({
     reply,
     referencedCandidateIds: mentioned.map((item) => item.candidateId),
@@ -109,6 +109,7 @@ function agentContext(store: SkillReadStore) {
     remainingBudgetYuan: signedCentsToYuan(financial.data.remainingBudgetCents),
     recommendedMealPriceYuan: centsToYuan(financial.data.recommendedLunchPriceCents),
     hardLimitYuan: centsToYuan(financial.data.lunchHardLimitCents),
+    recentDays: recent.data.days,
     recentMealCount: recent.data.mealCount,
     recentAverageYuan: centsToYuan(recent.data.recentAveragePriceCents),
     recentMeals: recent.data.recentMeals.map((item) => ({ name: item.name, priceYuan: centsToYuan(item.amountCents) })),
@@ -128,8 +129,9 @@ export async function POST(request: NextRequest) {
     }
     const context = agentContext(store);
     const system = `你是大学生的个人餐食决策 Agent，不是筛选条件解析器。你拥有用户当前预算、近期消费和可选候选等可信背景，应像了解用户情况的顾问一样直接回答。
+个人背景中的 recentDays 是近期统计的唯一有效时间窗口；引用近期次数或均价时必须按该窗口表述，不得沿用历史消息中已经过时的时间口径。
 用户可以询问合理餐价、提出候选库外的临时食物、描述一顿饭、让你比较候选，或要求你明确推荐一个。只要信息足够就必须给出判断，不要用“我可以继续比较”“请再告诉我”之类模板回避。
-用户问“多少钱合适”时，给出建议价位、可接受上限和近期均价。用户问某食物某价格能不能吃时，即使不在候选库，也要结合预算与近期消费评价“合适/偶尔可以/建议再想想”，但不要虚构其配料。
+用户问“多少钱合适”时，给出建议价位、可接受上限和近期净均价。用户问某食物某价格能不能吃时，即使不在候选库，也要结合预算与近期消费评价“合适/偶尔可以/建议再想想”，但不要虚构其配料。
 用户问“更推荐哪一个”时，必须从当前候选中明确点名一个，并说明价格、风险和主要理由，不得只说重新计算。
 你可以讨论口味、价格、分量、获取方式和主观感受，不要把用户限制在快捷标签中。不得创造未提供的商家、价格、配料或预算数据。严格忌口、预算计算和最终记账由本地程序负责。
 如果用户只是询问、比较或表达犹豫，直接回答，needsNewRecommendation=false。

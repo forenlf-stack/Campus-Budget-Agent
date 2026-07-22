@@ -6,7 +6,7 @@ import { skillReadStore, type MealTransaction, type SkillReadStore } from "@/ser
 
 export const recentMealConsumptionInputSchema = z.object({
   queryDate: z.date().refine((date) => Number.isFinite(date.getTime()), "查询日期无效"),
-  days: z.number().int().min(1).max(90).default(7),
+  days: z.number().int().min(1).max(90).default(14),
   recentCount: z.number().int().min(1).max(30).default(3),
 });
 
@@ -32,11 +32,32 @@ function average(transactions: MealTransaction[]) {
   return transactions.length ? Math.floor(sum(transactions.map((item) => item.amountCents)) / transactions.length) : 0;
 }
 
+function netMealExpenses(transactions: MealTransaction[]) {
+  const refundedByOriginalId = new Map<string, bigint>();
+  for (const transaction of transactions) {
+    if (transaction.type !== "REFUND" || !transaction.originalTransactionId) continue;
+    refundedByOriginalId.set(
+      transaction.originalTransactionId,
+      (refundedByOriginalId.get(transaction.originalTransactionId) ?? BigInt(0)) + BigInt(transaction.amountCents),
+    );
+  }
+
+  return transactions
+    .filter((transaction) => transaction.type === "EXPENSE" && !transaction.isFixedExpense)
+    .flatMap((transaction) => {
+      const netCents = BigInt(transaction.amountCents) - (refundedByOriginalId.get(transaction.id) ?? BigInt(0));
+      if (netCents <= 0) return [];
+      const amountCents = Number(netCents);
+      if (!Number.isSafeInteger(amountCents)) throw new RangeError("近期餐食净额超出安全整数范围");
+      return [{ ...transaction, amountCents }];
+    });
+}
+
 export function getRecentMealConsumption(input: unknown, store: SkillReadStore = skillReadStore): SkillResult<RecentMealConsumptionData> {
   try {
     const parsed = recentMealConsumptionInputSchema.parse(input);
     const start = new Date(parsed.queryDate.getTime() - parsed.days * 86_400_000);
-    const transactions = store.readMealTransactions(start, parsed.queryDate).filter((item) => item.type === "EXPENSE" && !item.isFixedExpense);
+    const transactions = netMealExpenses(store.readMealTransactions(start, parsed.queryDate));
     const recentMeals = transactions.slice(0, parsed.recentCount);
     const totalCents = sum(transactions.map((item) => item.amountCents));
     const recentAveragePriceCents = average(recentMeals);

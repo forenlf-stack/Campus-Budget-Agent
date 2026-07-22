@@ -13,7 +13,7 @@ import { getRecentMealConsumption, type RecentMealConsumptionData } from "@/serv
 import { rankMealCandidates, rankMealCandidateSchema, type RankedMealCandidate } from "@/server/skills/rank-meal-candidates";
 import { retrieveHistoryMeals, type RetrievedMealCandidate } from "@/server/skills/retrieve-history-meals";
 import { simulateBudgetImpact, type BudgetImpactData } from "@/server/skills/simulate-budget-impact";
-import { parseMealRequest } from "@/server/skills/parse-meal-request";
+import { mergeMealRequests, parseMealRequest } from "@/server/skills/parse-meal-request";
 import { interpretedMealRequestSchema } from "@/server/llm/agent-reasoning";
 
 export const fixedMealRecommendationInputSchema = directMealRecommendationInputSchema.extend({
@@ -134,17 +134,10 @@ export function runFixedMealRecommendation(
   }
   const location = settings.defaultLocation || undefined;
   const interpreted = parsed.data.interpretedRequest;
+  const localRequest = parseMealRequest(parsed.data.userRequest);
   const naturalRequest = interpreted
-    ? {
-        quickTags: interpreted.quickTags,
-        historyQuery: null,
-        preferredTerms: interpreted.preferredTerms,
-        avoidedTerms: interpreted.avoidedTerms,
-        strictAvoidedTerms: interpreted.strictAvoidedTerms,
-        ...(interpreted.hardPriceLimitCents ? { hardPriceLimitCents: interpreted.hardPriceLimitCents } : {}),
-        ...(interpreted.targetPriceCents ? { targetPriceCents: interpreted.targetPriceCents } : {}),
-      }
-    : parseMealRequest(parsed.data.userRequest);
+    ? mergeMealRequests(localRequest, interpreted, parsed.data.userRequest)
+    : localRequest;
   const quickTags = unique([...parsed.data.quickTags, ...naturalRequest.quickTags]);
   const retrieved = dependencies.retrieveHistoryMeals({ enabledOnly: true }, dependencies.store);
   if (!retrieved.success) return failed(runId, executionSteps, "retrieve_history_meals", retrieved.error);

@@ -71,6 +71,16 @@ describe("menu meal recommendation workflow", () => {
     expect(readSettings).not.toHaveBeenCalled();
   });
 
+  it("只有一项菜单候选时返回候选不足且不读取数据库", async () => {
+    const readSettings = vi.fn(() => settings);
+    const result = await run([menuCandidate("a")], { store: store({ readSettings }) });
+    expect(result).toMatchObject({
+      success: true,
+      data: { status: "INSUFFICIENT_MENU_CONTENT", recognition: { validCount: 1 }, recommendations: [] },
+    });
+    expect(readSettings).not.toHaveBeenCalled();
+  });
+
   it("所有候选超过参考价时仍保留候选并展示风险", async () => {
     const result = await run([menuCandidate("a", { priceCents: 2_501 }), menuCandidate("b", { priceCents: 3_000 })]);
     expect(result).toMatchObject({ success: true, data: { status: "READY" } });

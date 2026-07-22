@@ -6,7 +6,9 @@ import { HomeLink } from "@/app/components/home-link";
 import { agentCapabilities } from "@/lib/agent-capabilities";
 import { confirmMealDecisionResponseSchema } from "@/lib/meal-decisions";
 import { mealAgentChatResponseSchema, type MealAgentMessage } from "@/lib/meal-agent-chat";
+import { classifyMealInput, normalizeMealConversation, truncateMealMessage } from "@/lib/meal-input-routing";
 import { mealPlanAssessmentResponseSchema, type MealPlanAssessmentResponse } from "@/lib/meal-plan-assessment";
+import { parseMenuText } from "@/lib/menu-text";
 import { menuMealRecommendationResponseSchema, type MenuMealRecommendationResponse } from "@/lib/menu-meal-recommendations";
 import { mealRecommendationQuickTags, type DirectMealRecommendationResponse, type MealRecommendationCard, type MealRecommendationQuickTag } from "@/lib/meal-recommendations";
 import { centsToYuan, yuanToCents } from "@/lib/money";
@@ -82,7 +84,7 @@ export function EatWhatClient() {
   }
 
   async function recommend(changeBatch = false, overrides?: { request?: string; tags?: MealRecommendationQuickTag[]; skipAgentInterpretation?: boolean; appendConversation?: boolean }) {
-    setLoading(true); setError(""); setPendingPurchase(null); setPurchaseMessage("");
+    setLoading(true); setError(""); setAssessment(null); setPendingPurchase(null); setPurchaseMessage("");
     try {
       const effectiveRequest = overrides?.request ?? userRequest;
       const effectiveTags = overrides?.tags ?? quickTags;
@@ -97,14 +99,14 @@ export function EatWhatClient() {
           { role: "user", content: effectiveRequest.trim() },
           ...(next.agentResponse ? [{ role: "assistant" as const, content: `${next.agentResponse.understanding} ${next.agentResponse.response}` }] : []),
         ];
-        return messages.slice(-agentCapabilities.conversation.maximumHistoryMessages);
+        return normalizeMealConversation(messages);
       });
     } catch (caught) { setError(caught instanceof Error ? caught.message : "推荐失败"); }
     finally { setLoading(false); }
   }
 
   async function requestMenu(options: { image?: File; text?: string; confirmedPrices?: Record<string, number>; request?: string; tags?: MealRecommendationQuickTag[]; skipAgentInterpretation?: boolean } = {}) {
-    setError(""); setMenuRetryable(false); setMenuData(null); setPendingPurchase(null); setPurchaseMessage("");
+    setError(""); setAssessment(null); setMenuRetryable(false); setMenuData(null); setPendingPurchase(null); setPurchaseMessage("");
     if (options.image || options.text) setLastMenuInput({ image: options.image, text: options.text });
     const body = new FormData();
     if (options.image) body.append("image", options.image);
@@ -163,7 +165,7 @@ export function EatWhatClient() {
 
   function submitMenuText() {
     const text = menuTextInput.trim();
-    if (!text) {
+    if (parseMenuText(text).length < 2) {
       setError("请输入至少两项菜单内容，例如每行一个菜名和价格");
       return;
     }
@@ -193,24 +195,22 @@ export function EatWhatClient() {
     const recommendations = currentRecommendations();
     if (!message) return;
     setUserRequest("");
-    const assessmentIntent = /(?:怎么样|合适|值不值|划算|能不能|可以吗|建议|评价|认为|准备吃|打算吃|这一顿|这顿)/.test(message)
-      && /(?:(?:\d+(?:\.\d{1,2})?)|[一二两三四五六七八九十百]+)\s*(?:元|块|$)/.test(message);
-    if (assessmentIntent) { await assessMealPlan(message); return; }
-    const explicitRecommendationIntent = /(?:吃什么|帮我推荐|推荐一下|给我推荐|来一批|换一批|重新推荐|按.+筛选)/.test(message);
-    if (recommendations.length === 0 && explicitRecommendationIntent) {
+    const route = classifyMealInput(message);
+    if (route === "DIRECT_RECOMMENDATION") {
       await recommend(false, { request: message }); return;
     }
+    if (route === "ASSESSMENT") { await assessMealPlan(message); return; }
     setChatBusy(true); setError("");
     try {
       const response = await fetch("/api/meal-recommendations/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history: conversation.slice(-agentCapabilities.conversation.maximumHistoryMessages), recommendations }),
+        body: JSON.stringify({ message, history: normalizeMealConversation(conversation), recommendations }),
       });
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error("Agent 对话失败");
       const result = mealAgentChatResponseSchema.parse(payload);
-      setConversation((current) => ([...current, { role: "user" as const, content: message }, { role: "assistant" as const, content: result.reply }] satisfies MealAgentMessage[]).slice(-agentCapabilities.conversation.maximumHistoryMessages));
+      setConversation((current) => normalizeMealConversation([...current, { role: "user", content: message }, { role: "assistant", content: result.reply }]));
       if (result.needsNewRecommendation && result.suggestedRequest) {
         const tags = [...new Set([...quickTags, ...result.suggestedQuickTags])];
         setQuickTags(tags);
@@ -233,7 +233,7 @@ export function EatWhatClient() {
       if (!response.ok) throw new Error(typeof payload === "object" && payload && "error" in payload && typeof payload.error === "object" && payload.error && "message" in payload.error ? String(payload.error.message) : "方案评价失败");
       const result = mealPlanAssessmentResponseSchema.parse(payload);
       setAssessment(result);
-      setConversation((current) => ([...current, { role: "user" as const, content: description }, { role: "assistant" as const, content: result.reply }] satisfies MealAgentMessage[]).slice(-agentCapabilities.conversation.maximumHistoryMessages));
+      setConversation((current) => normalizeMealConversation([...current, { role: "user", content: description }, { role: "assistant", content: result.reply }]));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "方案评价失败"); }
     finally { setChatBusy(false); }
   }
@@ -291,7 +291,7 @@ export function EatWhatClient() {
     <section className="mt-8 flex flex-wrap justify-center gap-2">{mealRecommendationQuickTags.map((tag) => <button key={tag} type="button" aria-pressed={quickTags.includes(tag)} onClick={() => toggle(tag)} className={`rounded-full border px-4 py-2.5 text-sm font-semibold shadow-sm transition ${quickTags.includes(tag) ? "border-orange-600 bg-gradient-to-r from-orange-600 to-amber-500 text-white shadow-orange-600/15" : "border-white bg-white/85 text-slate-600 hover:-translate-y-0.5 hover:border-orange-200 hover:text-orange-700"}`}>{quickTagLabels[tag]}</button>)}</section>
     <div className="mt-3 flex justify-center"><label className="flex items-center gap-2 text-xs text-slate-500">候选数量<select value={recommendationCount} onChange={(event) => setRecommendationCount(Number(event.target.value))} className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-sm text-slate-700">{[4, 6, 8, 10].map((count) => <option key={count} value={count}>{count} 个</option>)}</select></label></div>
     {conversation.length > 0 && <section className="mx-auto mt-4 max-w-2xl rounded-2xl border border-violet-100 bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm font-semibold text-violet-900">本次决策对话</p><button type="button" onClick={clearConversation} className="text-xs text-slate-500 underline">清空对话</button></div><div className="mt-3 grid gap-3">{conversation.map((message, index) => <div key={`${message.role}-${index}`} className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm ${message.role === "user" ? "ml-auto bg-slate-900 text-white" : "bg-violet-50 text-violet-950"}`}><p className="mb-1 text-[11px] opacity-60">{message.role === "user" ? "你" : "Agent"}</p>{message.content}</div>)}</div></section>}
-    <form onSubmit={(event) => { event.preventDefault(); void chatWithAgent(); }} className="mx-auto mt-4 flex max-w-2xl gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-100"><label className="sr-only" htmlFor="meal-agent-request">告诉推荐 Agent 你的具体需求</label><input id="meal-agent-request" value={userRequest} onChange={(event) => setUserRequest(event.target.value)} maxLength={agentCapabilities.conversation.maximumMessageCharacters} placeholder={currentRecommendations().length || conversation.length ? "继续说，例如：31元的麻辣烫按最近消费看合适吗？" : "例如：想吃清淡的面，或评价一下总共31元的麻辣烫"} className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm outline-none" /><button type="submit" disabled={loading || chatBusy} className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{chatBusy ? "思考中…" : conversation.length ? "发送" : "问 Agent"}</button></form>
+    <form onSubmit={(event) => { event.preventDefault(); void chatWithAgent(); }} className="mx-auto mt-4 flex max-w-2xl gap-2 rounded-2xl border border-stone-200 bg-white p-2 shadow-sm focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-100"><label className="sr-only" htmlFor="meal-agent-request">告诉推荐 Agent 你的具体需求</label><input id="meal-agent-request" value={userRequest} onChange={(event) => setUserRequest(truncateMealMessage(event.target.value))} maxLength={agentCapabilities.conversation.maximumMessageCharacters} placeholder={currentRecommendations().length || conversation.length ? "继续说，例如：31元的麻辣烫按最近消费看合适吗？" : "例如：想吃清淡的面，或评价一下总共31元的麻辣烫"} className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm outline-none" /><button type="submit" disabled={loading || chatBusy} className="shrink-0 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{chatBusy ? "思考中…" : conversation.length ? "发送" : "问 Agent"}</button></form>
     {assessment && <section className={`mx-auto mt-5 max-w-2xl rounded-2xl border p-5 ${assessment.level === "POSITIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-950" : assessment.level === "CAUTION" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-red-200 bg-red-50 text-red-950"}`}><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold">本次方案评价</p><h2 className="mt-1 text-xl font-bold">{assessment.title}</h2></div><span className="text-xs opacity-60">{assessment.source === "LLM" ? "DeepSeek + 本地数据" : "本地规则"}</span></div><p className="mt-4 text-sm leading-6">{assessment.reply}</p><details className="mt-4 border-t border-current/10 pt-3 text-sm"><summary className="cursor-pointer">查看评判依据</summary><div className="mt-3 grid gap-2">{assessment.reasons.map((reason) => <p key={reason}>• {reason}</p>)}</div></details></section>}
     <div className="mt-6 flex flex-wrap justify-center gap-3"><button disabled={loading} onClick={() => void recommend(false)} className="rounded-xl bg-orange-700 px-6 py-3 font-semibold text-white disabled:bg-slate-300">{loading ? "正在推荐…" : "直接推荐"}</button>{data?.recommendations.length ? <button disabled={loading} onClick={() => void recommend(true)} className="rounded-xl border border-orange-700 bg-white px-6 py-3 font-semibold text-orange-700 disabled:opacity-50">换一批</button> : null}<button disabled={menuLoading} onClick={() => fileInputRef.current?.click()} className="rounded-xl border border-slate-800 bg-white px-6 py-3 font-semibold disabled:opacity-50">拍菜单 / 上传图片</button><input ref={fileInputRef} hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handleFile} /></div>
     {error && <div role="alert" className="mx-auto mt-6 max-w-xl rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><p>{error}</p><div className="mt-3 flex flex-wrap gap-3">{lastMenuInput && menuRetryable && <button type="button" disabled={menuLoading} onClick={() => void requestMenu(lastMenuInput)} className="font-semibold underline">重试识别</button>}<button type="button" onClick={inputMenuText} className="font-semibold underline">手动输入菜单文字</button><button type="button" onClick={() => void recommend(false)} className="font-semibold underline">改用历史推荐</button></div></div>}

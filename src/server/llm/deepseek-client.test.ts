@@ -49,4 +49,38 @@ describe("deepseek_client", () => {
       .resolves.toEqual({ ok: true });
     expect(fetchImplementation).toHaveBeenCalledTimes(2);
   });
+
+  it.each([400, 401, 403])("HTTP %s 不重试", async (status) => {
+    const fetchImplementation = vi.fn(async () => new Response("error", { status })) as unknown as typeof fetch;
+
+    await expect(callDeepSeekJson("system", "user", z.object({ ok: z.literal(true) }), { fetchImplementation, retryDelayMs: 0 }))
+      .rejects.toThrow(`DeepSeek 返回 ${status}`);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([408, 429, 500, 503])("HTTP %s 会重试", async (status) => {
+    const fetchImplementation = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("temporary", { status }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "{\"ok\":true}" } }] }), { status: 200 }));
+
+    await expect(callDeepSeekJson("system", "user", z.object({ ok: z.literal(true) }), { fetchImplementation, retryDelayMs: 0 }))
+      .resolves.toEqual({ ok: true });
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
+
+  it("模型返回无效 JSON 时不重试", async () => {
+    const fetchImplementation = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "not json" } }] }), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(callDeepSeekJson("system", "user", z.object({ ok: z.literal(true) }), { fetchImplementation, retryDelayMs: 0 }))
+      .rejects.toBeInstanceOf(SyntaxError);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
+
+  it("模型返回不符合契约的 JSON 时不重试", async () => {
+    const fetchImplementation = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "{\"ok\":false}" } }] }), { status: 200 })) as unknown as typeof fetch;
+
+    await expect(callDeepSeekJson("system", "user", z.object({ ok: z.literal(true) }), { fetchImplementation, retryDelayMs: 0 }))
+      .rejects.toBeInstanceOf(z.ZodError);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+  });
 });

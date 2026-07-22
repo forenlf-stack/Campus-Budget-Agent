@@ -124,7 +124,7 @@ describe("get_financial_context", () => {
 describe("get_recent_meal_consumption", () => {
   it("统计近期正餐次数、总额和平均价格", () => {
     const result = getRecentMealConsumption({ queryDate }, store());
-    expect(result.success && result.data).toMatchObject({ days: 7, mealCount: 3, totalCents: 4_800, averagePriceCents: 1_600 });
+    expect(result.success && result.data).toMatchObject({ days: 14, mealCount: 3, totalCents: 4_800, averagePriceCents: 1_600 });
   });
 
   it("默认只返回最近3次并去重名称", () => {
@@ -138,6 +138,31 @@ describe("get_recent_meal_consumption", () => {
   it("退款不作为一次正餐或平均价格样本", () => {
     const result = getRecentMealConsumption({ queryDate }, store());
     expect(result.success && result.data.mealCount).toBe(3);
+  });
+
+  it("按原交易关联退款，部分退款使用净额", () => {
+    const transactions: MealTransaction[] = [
+      { ...recentMeals[0], id: "partial", amountCents: 2_000 },
+      { id: "partial-refund", type: "REFUND", category: "MEAL", amountCents: 500, occurredAt: new Date("2026-07-14T11:30:00+08:00"), isFixedExpense: false, itemName: "退款", merchant: "面馆", originalTransactionId: "partial" },
+    ];
+    const result = getRecentMealConsumption({ queryDate }, store({ readMealTransactions: () => transactions }));
+    expect(result).toMatchObject({ success: true, data: { mealCount: 1, totalCents: 1_500, averagePriceCents: 1_500, recentAveragePriceCents: 1_500 } });
+    if (result.success) expect(result.data.recentMeals[0]?.amountCents).toBe(1_500);
+  });
+
+  it("全额或超额退款的原交易不计次数和均价", () => {
+    const transactions: MealTransaction[] = [
+      { ...recentMeals[0], id: "full", amountCents: 2_000 },
+      { ...recentMeals[1], id: "kept", amountCents: 1_600 },
+      { id: "full-refund-1", type: "REFUND", category: "MEAL", amountCents: 1_200, occurredAt: new Date("2026-07-14T11:30:00+08:00"), isFixedExpense: false, itemName: "退款", merchant: "面馆", originalTransactionId: "full" },
+      { id: "full-refund-2", type: "REFUND", category: "MEAL", amountCents: 900, occurredAt: new Date("2026-07-14T11:40:00+08:00"), isFixedExpense: false, itemName: "退款", merchant: "面馆", originalTransactionId: "full" },
+    ];
+    expect(getRecentMealConsumption({ queryDate }, store({ readMealTransactions: () => transactions }))).toMatchObject({ success: true, data: { mealCount: 1, totalCents: 1_600, averagePriceCents: 1_600 } });
+  });
+
+  it("不将缺少原交易关联的退款错误抵扣其他餐食", () => {
+    const transactions: MealTransaction[] = [recentMeals[0], { ...recentMeals[3], amountCents: 2_000 }];
+    expect(getRecentMealConsumption({ queryDate }, store({ readMealTransactions: () => transactions }))).toMatchObject({ success: true, data: { mealCount: 1, totalCents: 2_000 } });
   });
 
   it("最近3次平均价严格超过建议价120%时触发并返回证据", () => {

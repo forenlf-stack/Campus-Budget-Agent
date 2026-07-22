@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { agentCapabilities } from "@/lib/agent-capabilities";
@@ -11,6 +11,7 @@ import { listTransactionsBetween } from "@/server/transaction-store";
 import { requireApiUser } from "@/server/auth";
 
 export const runtime = "nodejs";
+const billAnalysisModelTimeoutMs = Math.min(agentCapabilities.model.defaultTimeoutMs, 8_000);
 
 const agentSchema = z.object({
   overview: z.string().trim().min(1).max(1200),
@@ -37,8 +38,9 @@ function ruleAgent(analysis: ReturnType<typeof buildBillAnalysis>, reason?: stri
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const analysisMode = request.nextUrl.searchParams.get("mode") === "quick" ? "quick" : "deep";
     const user = await requireApiUser();
     const now = new Date();
     const rows = listTransactionsBetween(user.id, new Date(now.getTime() - 180 * 86_400_000), now);
@@ -63,7 +65,9 @@ export async function GET() {
 overview 用一段自然中文总结；observations 提供3到6条有数据依据的观察；suggestions 提供2到5条温和建议；toneNote 用一句话说明建议的边界。只返回JSON。`,
         JSON.stringify({ generatedAt: now.toISOString(), facts: agentFacts }),
         agentSchema,
-        { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled" },
+        analysisMode === "deep"
+          ? { timeoutMs: agentCapabilities.model.defaultTimeoutMs, thinking: "enabled", retries: 1 }
+          : { timeoutMs: billAnalysisModelTimeoutMs, thinking: "enabled", retries: 0 },
       );
       agent = { ...response, source: "LLM" as const };
     } catch (error) {

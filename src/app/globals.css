@@ -310,6 +310,10 @@ summary:focus-visible {
   font-weight: 900;
 }
 
+.z-70 {
+  z-index: 70;
+}
+
 @media (max-width: 640px) {
   .app-page .page-heading {
     font-size: clamp(2rem, 10vw, 2.75rem);

@@ -67,6 +67,7 @@ export function parseMentionedPriceCents(input: string): number | null {
 }
 
 const recommendationIntentPattern = /(?:吃什么|帮我(?:推荐|选)|给我推荐|推荐(?:一(?:个|份|顿)|点|些|一下|\d|[零〇一二两三四五六七八九十百千]|\s*$)|建议吃|来一(?:份|顿)|换一批|重新推荐|按.+筛选)/;
+const recommendationConstraintPattern = /(?:以内|以下|不超过|预算|清淡|少油|低脂|健康|不辣|不要辣|不想吃|不能吃|忌口|过敏|附近|不想走远|便宜|实惠|性价比|想吃辣)/;
 const assessmentIntentPattern = /(?:怎么样|合适吗|值不值|划算吗|能不能吃|可以吃吗|建议吗|评价|你认为|值得吗|贵不贵|超预算吗)/;
 const concreteFoodPattern = /(?:咖喱|麻辣烫|火锅|烧烤|汉堡|披萨|寿司|沙拉|米线|馄饨|豆腐|鳗|鸡|鸭|鱼|虾|牛|猪|肉|蛋|饭|面|粉|粥|饺|包|饼|锅|汤|菜)/;
 
@@ -74,6 +75,8 @@ export function classifyMealInput(input: string): MealInputRoute {
   const message = input.trim();
   // A request to generate choices wins even when it also contains a price.
   if (recommendationIntentPattern.test(message)) return "DIRECT_RECOMMENDATION";
+  // “想吃 + 明确筛选条件”本身就是推荐请求，不应退化为普通聊天。
+  if (/(?:想吃|想要|来点)/.test(message) && recommendationConstraintPattern.test(message)) return "DIRECT_RECOMMENDATION";
   if (parseMentionedPriceCents(message) === null || !assessmentIntentPattern.test(message)) return "CHAT";
   const withoutGenericMeal = message.replace(/这\s*(?:一)?\s*(?:顿|份|个)?\s*(?:饭|餐|东西)/g, "");
   return concreteFoodPattern.test(withoutGenericMeal) ? "ASSESSMENT" : "CHAT";

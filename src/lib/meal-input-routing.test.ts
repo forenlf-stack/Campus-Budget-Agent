@@ -8,6 +8,7 @@ describe("meal input routing", () => {
     ["推荐20元的饭", "DIRECT_RECOMMENDATION"],
     ["帮我推荐一顿15元以内的清淡午餐", "DIRECT_RECOMMENDATION"],
     ["25元以内想吃咖喱，不想走远，推荐", "DIRECT_RECOMMENDATION"],
+    ["想吃清淡的面，不要辣，20元以内", "DIRECT_RECOMMENDATION"],
     ["30元的鳗鱼牛肉饭合适吗", "ASSESSMENT"],
     ["￥30的鳗鱼饭合适吗", "ASSESSMENT"],
     ["31块5的麻辣烫值不值", "ASSESSMENT"],

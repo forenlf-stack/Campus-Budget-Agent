@@ -94,6 +94,30 @@ describe("POST /api/meal-recommendations/chat", () => {
     expect(payload.reply).not.toContain("我可以直接评价");
   });
 
+  it("历史低频列表的后续晚餐追问会延续本地上下文并给出明确选择", async () => {
+    callDeepSeekJson.mockRejectedValueOnce(new Error("temporary failure"));
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "你认为我吃哪个当晚饭最好",
+        history: [
+          { role: "user", content: "我最近吃过但是不常吃的有哪些" },
+          { role: "assistant", content: "按你的本地账本统计，咖喱鸡肉饭最近吃过1次。" },
+        ],
+        recommendations: [],
+      }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload).toMatchObject({ source: "RULES", needsNewRecommendation: false, referencedCandidateIds: [] });
+    expect(payload.reply).toContain("我更推荐咖喱鸡肉饭");
+    expect(payload.reply).toContain("晚餐");
+    expect(payload.reply).toContain("无法可靠判断");
+    expect(payload.reply).not.toContain("我可以直接评价");
+  });
+
   it("询问具体餐食价格时直接回答价格区间，不触发无关候选重算", async () => {
     const request = new Request("http://localhost/api/meal-recommendations/chat", {
       method: "POST",
@@ -150,13 +174,50 @@ describe("POST /api/meal-recommendations/chat", () => {
     }) as Parameters<typeof POST>[0]);
     const payload = await response.json();
 
-    expect(payload.source).toBe("LLM");
+    expect(payload.source, JSON.stringify(payload)).toBe("LLM");
     expect(payload.reply).toContain("近期净均价高于");
     expect(payload.reply).not.toContain("经常超出");
     expect(payload.reply).toContain("正餐建议餐价");
     expect(payload.reply).toContain("15.00元左右");
     expect(payload.reply).not.toContain("15元以内");
     expect(payload.reply).toContain("当前没有可直接比较的咖喱候选");
+  });
+
+  it("模型混淆总剩余预算和建议日预算时要求修正后再返回", async () => {
+    callDeepSeekJson
+      .mockImplementationOnce(async (_system: string, user: string) => {
+        const facts = JSON.parse(user) as { subject: string; configuredRecommendedMealPriceYuan: string; configuredAcceptableUpperLimitYuan: string; recommendedDailyBudgetYuan: string };
+        return { reply: `${facts.subject}的通用正餐建议价是¥${facts.configuredRecommendedMealPriceYuan}，上限¥${facts.configuredAcceptableUpperLimitYuan}。今天剩余预算为¥${facts.recommendedDailyBudgetYuan}，当前没有可直接比较的${facts.subject}候选。` };
+      })
+      .mockImplementationOnce(async (_system: string, user: string) => {
+        const facts = JSON.parse(user) as { subject: string; configuredRecommendedMealPriceYuan: string; configuredAcceptableUpperLimitYuan: string; remainingBudgetYuan: string; recommendedDailyBudgetYuan: string };
+        return { reply: `${facts.subject}的通用正餐建议价是¥${facts.configuredRecommendedMealPriceYuan}，上限¥${facts.configuredAcceptableUpperLimitYuan}。总剩余预算是¥${facts.remainingBudgetYuan}，后续建议日预算是¥${facts.recommendedDailyBudgetYuan}；当前没有可直接比较的${facts.subject}候选。` };
+      });
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "我想吃日料，给我价格建议", recommendations: [] }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(payload.source, JSON.stringify(payload)).toBe("LLM");
+    expect(payload.reply).toContain("总剩余预算");
+    expect(payload.reply).toContain("后续建议日预算");
+    expect(payload.reply).not.toContain("今天剩余预算");
+  });
+
+  it("近期均价超过上限时不会描述为仍在上限附近", async () => {
+    callDeepSeekJson.mockResolvedValueOnce({ reply: "日料的正餐建议价是¥15.00，上限是¥25.00。近期净均价¥28.90高于建议价，但仍在可接受上限附近；当前没有可直接比较的日料候选。" });
+    const response = await POST(new Request("http://localhost/api/meal-recommendations/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "我想吃日料，给我价格建议", recommendations: [] }),
+    }) as Parameters<typeof POST>[0]);
+    const payload = await response.json();
+
+    expect(payload.source, JSON.stringify(payload)).toBe("LLM");
+    expect(payload.reply).toContain("已经高于可接受上限");
+    expect(payload.reply).not.toContain("仍在可接受上限附近");
   });
 
   it("用户明确说明已经购买时返回结构化记账草稿而不直接写账", async () => {

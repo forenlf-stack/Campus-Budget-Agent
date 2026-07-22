@@ -7,6 +7,7 @@ import { billAnalysisResponseSchema, type BillAnalysisResponse } from "@/lib/bil
 import { centsToYuan, signedCentsToYuan } from "@/lib/money";
 
 type AnalysisWindow = BillAnalysisResponse["windows"][number];
+type AnalysisMode = "quick" | "deep";
 
 function signedYuanLabel(cents: number) {
   const value = signedCentsToYuan(cents);
@@ -41,21 +42,21 @@ function formatGeneratedAt(value: string) {
   return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-async function requestBillAnalysis() {
-  const response = await fetch("/api/bill-analysis", { cache: "no-store" });
+async function requestBillAnalysis(mode: AnalysisMode, signal?: AbortSignal) {
+  const response = await fetch(`/api/bill-analysis?mode=${mode}`, { cache: "no-store", signal });
   const payload: unknown = await response.json();
   if (!response.ok) throw new Error(typeof payload === "object" && payload && "error" in payload && typeof payload.error === "object" && payload.error && "message" in payload.error ? String(payload.error.message) : "账单分析失败");
   return billAnalysisResponseSchema.parse(payload);
 }
 
-function LoadingState() {
+function LoadingState({ mode }: { mode: AnalysisMode }) {
   return <div className="mt-8 grid gap-5" aria-live="polite" aria-label="正在生成账单分析">
     <section className="animate-pulse overflow-hidden rounded-[2rem] border border-indigo-100 bg-white shadow-sm">
       <div className="h-52 bg-gradient-to-br from-slate-900 via-indigo-950 to-indigo-900 p-7"><div className="h-4 w-28 rounded-full bg-white/20" /><div className="mt-8 h-7 w-3/4 rounded-lg bg-white/15" /><div className="mt-3 h-7 w-1/2 rounded-lg bg-white/10" /></div>
       <div className="grid gap-5 p-7 sm:grid-cols-2"><div className="h-28 rounded-2xl bg-stone-100" /><div className="h-28 rounded-2xl bg-stone-100" /></div>
     </section>
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((item) => <div key={item} className="h-48 animate-pulse rounded-3xl border border-stone-200 bg-white p-5 shadow-sm"><div className="h-4 w-20 rounded bg-stone-200" /><div className="mt-5 h-8 w-28 rounded bg-stone-200" /><div className="mt-6 h-10 rounded-xl bg-stone-100" /></div>)}</div>
-    <p className="text-center text-sm text-slate-500">正在整理最近 180 天账单并生成分析…</p>
+    <p className="text-center text-sm text-slate-500">{mode === "deep" ? "Agent 正在深度分析最近 180 天账单，可能需要较长时间…" : "正在整理最近 180 天账单；模型响应较慢时将快速使用本地分析…"}</p>
   </div>;
 }
 
@@ -77,12 +78,13 @@ export function BillAnalysisClient() {
   const [data, setData] = useState<BillAnalysisResponse | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("deep");
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      setData(await requestBillAnalysis());
+      setData(await requestBillAnalysis(analysisMode));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "账单分析失败");
     } finally {
@@ -90,23 +92,34 @@ export function BillAnalysisClient() {
     }
   }
 
+  function changeAnalysisMode(mode: AnalysisMode) {
+    if (mode === analysisMode) return;
+    setLoading(true);
+    setError("");
+    setData(null);
+    setAnalysisMode(mode);
+  }
+
   useEffect(() => {
+    const controller = new AbortController();
     let active = true;
-    void requestBillAnalysis()
+    void requestBillAnalysis(analysisMode, controller.signal)
       .then((payload) => { if (active) setData(payload); })
-      .catch((caught: unknown) => { if (active) setError(caught instanceof Error ? caught.message : "账单分析失败"); })
+      .catch((caught: unknown) => {
+        if (active && !(caught instanceof DOMException && caught.name === "AbortError")) setError(caught instanceof Error ? caught.message : "账单分析失败");
+      })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
+    return () => { active = false; controller.abort(); };
+  }, [analysisMode]);
 
   return <main className="relative min-h-screen overflow-hidden bg-[#f7f7f4] px-4 py-8 text-slate-900 sm:px-6 sm:py-10">
     <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[32rem] bg-[radial-gradient(circle_at_10%_10%,rgba(99,102,241,0.12),transparent_36%),radial-gradient(circle_at_88%_4%,rgba(20,184,166,0.10),transparent_32%)]" />
     <div className="relative mx-auto max-w-6xl">
-      <div className="flex items-center justify-between gap-4"><HomeLink />{data && <span className="hidden items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1.5 text-xs text-slate-500 shadow-sm backdrop-blur sm:inline-flex"><span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]" />更新于 {formatGeneratedAt(data.generatedAt)}</span>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-4"><HomeLink /><div className="flex flex-wrap items-center justify-end gap-3"><div role="group" aria-label="账单分析模式" className="inline-flex rounded-2xl border border-white/90 bg-white/80 p-1 shadow-sm backdrop-blur"><button type="button" aria-pressed={analysisMode === "quick"} onClick={() => changeAnalysisMode("quick")} className={`rounded-xl px-3 py-2 text-xs font-bold ${analysisMode === "quick" ? "bg-teal-700 text-white shadow-sm" : "text-slate-500 hover:bg-stone-100"}`}>快速分析</button><button type="button" aria-pressed={analysisMode === "deep"} onClick={() => changeAnalysisMode("deep")} className={`rounded-xl px-3 py-2 text-xs font-bold ${analysisMode === "deep" ? "bg-indigo-700 text-white shadow-sm" : "text-slate-500 hover:bg-stone-100"}`}>深度 Agent 分析</button></div>{data && <span className="hidden items-center gap-2 rounded-full border border-white/80 bg-white/70 px-3 py-1.5 text-xs text-slate-500 shadow-sm backdrop-blur sm:inline-flex"><span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]" />更新于 {formatGeneratedAt(data.generatedAt)}</span>}</div></div>
 
       <header className="mt-8 max-w-3xl sm:mt-10"><div className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50/80 px-3 py-1.5 text-xs font-bold tracking-wide text-indigo-700"><span aria-hidden="true">✦</span> 消费复盘</div><h1 className="mt-4 text-4xl font-black tracking-[-0.035em] text-slate-950 sm:text-5xl">看清钱花在哪里，<br className="hidden sm:block" /><span className="bg-gradient-to-r from-indigo-600 to-teal-600 bg-clip-text text-transparent">再决定下一步。</span></h1><p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">本地程序负责准确统计，Agent 负责解释变化。数据只在你的账户中使用，建议仅作为温和的消费参考。</p></header>
 
-      {loading && !data && <LoadingState />}
+      {loading && !data && <LoadingState mode={analysisMode} />}
       {error && <div role="alert" className="mt-8 flex flex-col gap-4 rounded-3xl border border-red-200 bg-red-50/90 p-6 text-red-900 shadow-sm sm:flex-row sm:items-center sm:justify-between"><div><p className="font-bold">暂时无法生成分析</p><p className="mt-1 text-sm text-red-700">{error}</p></div><button onClick={() => void load()} className="shrink-0 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">重新分析</button></div>}
 
       {data && <>

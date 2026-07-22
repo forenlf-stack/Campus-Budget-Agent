@@ -80,6 +80,115 @@ function localHistoryResponse(data: HistoricalMealPatternsData) {
   });
 }
 
+function priorHistoryQuery(input: z.infer<typeof mealAgentChatInputSchema>) {
+  return [...input.history].reverse().find((message) => message.role === "user" && parseMealRequest(message.content).historyQuery === "RECENT_INFREQUENT");
+}
+
+function asksHistoricalChoice(message: string) {
+  return /(?:哪个|哪一个|选谁|选什么|推荐|最好|更好|最合适|最便宜|最贵|当早餐|当午饭|当午餐|当晚饭|当晚餐|夜宵)/.test(message);
+}
+
+function localHour(date: Date) {
+  const hour = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", hour12: false })
+    .formatToParts(date).find((part) => part.type === "hour")?.value;
+  return Number(hour ?? 0) % 24;
+}
+
+function requestedMealPeriod(message: string) {
+  if (/(?:早餐|早饭|早上)/.test(message)) return { label: "早餐", matches: (hour: number) => hour >= 5 && hour < 10 };
+  if (/(?:午餐|午饭|中午)/.test(message)) return { label: "午餐", matches: (hour: number) => hour >= 10 && hour < 16 };
+  if (/(?:晚餐|晚饭|晚上|夜宵)/.test(message)) return { label: "晚餐", matches: (hour: number) => hour >= 16 || hour < 2 };
+  return null;
+}
+
+function chooseHistoricalPattern(data: HistoricalMealPatternsData, message: string, context: ReturnType<typeof agentContext>) {
+  const period = requestedMealPeriod(message);
+  const periodMatches = period ? data.patterns.filter((item) => period.matches(localHour(item.lastOccurredAt))) : [];
+  const pool = periodMatches.length > 0 ? periodMatches : data.patterns;
+  if (/最便宜|省钱/.test(message)) return { selected: [...pool].sort((a, b) => a.averageNetAmountCents - b.averageNetAmountCents)[0], period, periodMatched: periodMatches.length > 0 };
+  if (/最贵/.test(message)) return { selected: [...pool].sort((a, b) => b.averageNetAmountCents - a.averageNetAmountCents)[0], period, periodMatched: periodMatches.length > 0 };
+  if (/最近|刚吃/.test(message) && !/(?:不常吃|不经常)/.test(message)) return { selected: [...pool].sort((a, b) => b.lastOccurredAt.getTime() - a.lastOccurredAt.getTime())[0], period, periodMatched: periodMatches.length > 0 };
+  const targetCents = Math.round(Number(context.recommendedMealPriceYuan) * 100);
+  const hardLimitCents = Math.round(Number(context.hardLimitYuan) * 100);
+  const selected = [...pool].sort((a, b) => {
+    const aOver = a.averageNetAmountCents > hardLimitCents ? 1 : 0;
+    const bOver = b.averageNetAmountCents > hardLimitCents ? 1 : 0;
+    return aOver - bOver
+      || Math.abs(a.averageNetAmountCents - targetCents) - Math.abs(b.averageNetAmountCents - targetCents)
+      || a.occurrenceCount - b.occurrenceCount
+      || b.lastOccurredAt.getTime() - a.lastOccurredAt.getTime();
+  })[0];
+  return { selected, period, periodMatched: periodMatches.length > 0 };
+}
+
+async function historicalChoiceResponse(
+  input: z.infer<typeof mealAgentChatInputSchema>,
+  data: HistoricalMealPatternsData,
+  context: ReturnType<typeof agentContext>,
+) {
+  const choice = chooseHistoricalPattern(data, input.message, context);
+  if (!choice.selected) return localHistoryResponse(data);
+  const selected = choice.selected;
+  const merchant = selected.merchant && selected.merchant !== selected.name ? `（${selected.merchant}）` : "";
+  const periodText = choice.period
+    ? choice.periodMatched
+      ? `它最近一次也出现在${choice.period.label}时段`
+      : `现有流水无法可靠判断每道菜通常属于哪个时段，所以这次主要按价格和预算选择`
+    : "这笔净均价与当前正餐建议价比较接近";
+  const localReply = `如果从刚才那组本地记录里选${choice.period?.label ?? "一顿饭"}，我更推荐${selected.name}${merchant}。它的历史净均价是¥${centsToYuan(selected.averageNetAmountCents)}，${periodText}；当前正餐建议价约¥${context.recommendedMealPriceYuan}、可接受上限为¥${context.hardLimitYuan}，因此这是这组记录里更稳妥的选择。`;
+  const facts = {
+    userQuestion: input.message,
+    chosenMeal: selected.name,
+    merchant: selected.merchant,
+    historicalNetAverageYuan: centsToYuan(selected.averageNetAmountCents),
+    occurrenceCount: selected.occurrenceCount,
+    requestedPeriod: choice.period?.label ?? null,
+    lastOccurrenceMatchesRequestedPeriod: choice.period ? choice.periodMatched : null,
+    configuredRecommendedMealPriceYuan: context.recommendedMealPriceYuan,
+    configuredAcceptableUpperLimitYuan: context.hardLimitYuan,
+    selectionBasis: periodText,
+  };
+  const system = `你是个人餐食决策 Agent。本地程序已经从用户刚才看到的历史餐食中选定 chosenMeal，你负责用自然中文直接回答当前追问。
+必须明确点名 chosenMeal，说明历史净均价及选择理由；不得替换成其他餐食，不得虚构配料、营养、价格、商家或消费次数。
+若 lastOccurrenceMatchesRequestedPeriod=false，必须说明流水不能可靠判断各餐食通常所属时段，不能声称它适合该时段或曾在该时段消费。
+用2到3句连贯中文，不要说“我可以继续评价”或要求用户重新提供候选。只返回包含 reply 的 JSON。`;
+  const allowedMoneyCents = new Set([
+    selected.averageNetAmountCents,
+    Math.round(Number(context.recommendedMealPriceYuan) * 100),
+    Math.round(Number(context.hardLimitYuan) * 100),
+  ]);
+  try {
+    const copy = await callDeepSeekJson(system, JSON.stringify(facts), priceAdviceCopySchema, {
+      timeoutMs: Math.min(agentCapabilities.model.defaultTimeoutMs, 10_000),
+      thinking: "disabled",
+      retries: 0,
+    });
+    if (!copy.reply.includes(selected.name)) throw new Error("模型遗漏本地选定餐食");
+    if (mentionedMoneyCents(copy.reply).some((cents) => !allowedMoneyCents.has(cents))) throw new Error("模型加入了本地事实之外的金额");
+    if (choice.period && !choice.periodMatched && !/(?:无法|不能|不足以).{0,12}(?:判断|确定)|(?:时段).{0,8}(?:无法|不能|不足)/.test(copy.reply)) {
+      throw new Error("模型错误推断了餐食时段");
+    }
+    return mealAgentChatResponseSchema.parse({
+      reply: copy.reply,
+      referencedCandidateIds: [],
+      suggestedRequest: null,
+      suggestedQuickTags: [],
+      needsNewRecommendation: false,
+      source: "LLM",
+    });
+  } catch (error) {
+    return mealAgentChatResponseSchema.parse({
+      reply: localReply,
+      referencedCandidateIds: [],
+      suggestedRequest: null,
+      suggestedQuickTags: [],
+      needsNewRecommendation: false,
+      source: "RULES",
+      fallbackReason: error instanceof Error ? error.message : "模型历史餐食分析不可用",
+    });
+  }
+}
+
 function localPurchaseDraftResponse(draft: MealPurchaseDraft) {
   const amount = draft.actualPriceCents === null
     ? "金额还没有识别出来，请在确认窗口补充"
@@ -136,6 +245,10 @@ function priceAdviceSemanticProblems(
   subject: string,
   matchingCandidate: z.infer<typeof mealAgentChatInputSchema>["recommendations"][number] | undefined,
   allowedMoneyCents: Set<number>,
+  remainingBudgetYuan: string,
+  recommendedDailyBudgetYuan: string,
+  recentAverageYuan: string,
+  hardLimitYuan: string,
 ) {
   const problems: string[] = [];
   if (mentionedMoneyCents(reply).some((cents) => !allowedMoneyCents.has(cents))) problems.push("包含本地事实之外的金额");
@@ -153,6 +266,19 @@ function priceAdviceSemanticProblems(
   if (/(?:经常|多数|大部分|频繁|多次).{0,8}(?:超过|超出|高于)/.test(reply)) {
     problems.push("仅凭均价推断了消费超限频率");
   }
+  const moneyPattern = (yuan: string) => `(?:[¥￥]\\s*${escapedPattern(yuan)}|${escapedPattern(yuan)}\\s*元)`;
+  const remainingLabel = "(?:当前|今天|本月)?(?:总)?剩余预算|预算(?:还剩|剩余)";
+  const dailyLabel = "(?:每日|每天|日均|后续建议日|今日可花)(?:可花)?预算|每天可花";
+  if (new RegExp(`(?:${remainingLabel})[^，。；;]{0,12}${moneyPattern(recommendedDailyBudgetYuan)}`).test(reply)) {
+    problems.push("把后续建议日预算误写成总剩余预算");
+  }
+  if (new RegExp(`(?:${dailyLabel})[^，。；;]{0,12}${moneyPattern(remainingBudgetYuan)}`).test(reply)) {
+    problems.push("把总剩余预算误写成每日可花金额");
+  }
+  if (Number(recentAverageYuan) > Number(hardLimitYuan)
+    && /(?:仍(?:然)?|还)(?:在|处于)(?:可接受)?上限(?:内|以内|附近)|(?:没有|未)(?:超过|超出).{0,6}(?:上限)/.test(reply)) {
+    problems.push("错误描述近期均价与可接受上限的关系");
+  }
   return problems;
 }
 
@@ -161,6 +287,8 @@ function repairPriceAdviceFacts(
   subject: string,
   matchingCandidate: z.infer<typeof mealAgentChatInputSchema>["recommendations"][number] | undefined,
   recommendedMealPriceYuan: string,
+  recentAverageYuan: string,
+  hardLimitYuan: string,
 ) {
   let repaired = reply;
   const recommendedNumber = Number(recommendedMealPriceYuan);
@@ -178,6 +306,11 @@ function repairPriceAdviceFacts(
       .replace(new RegExp(`(?:目前|当前)?没有你?(?:近期|最近)(?:的)?${escapedSubject}候选记录`, "g"), `当前没有可直接比较的${subject}候选`);
   }
   repaired = repaired.replace(/(?:经常|多数|大部分|频繁|多次).{0,4}(?:超过|超出|高于)/g, "近期净均价高于");
+  if (Number(recentAverageYuan) > Number(hardLimitYuan)) {
+    repaired = repaired
+      .replace(/(?:但|不过)?仍(?:然)?(?:在|处于)(?:可接受)?上限(?:内|以内|附近)/g, "并且已经高于可接受上限")
+      .replace(/(?:没有|未)(?:超过|超出)(?:可接受)?上限/g, "已经高于可接受上限");
+  }
   if (!matchingCandidate && !/(?:没有|暂无).{0,16}(?:候选|可比较)|(?:候选|可比较).{0,10}(?:没有|暂无)/.test(repaired)) {
     repaired = `${repaired.replace(/[。；;\s]+$/, "")}。${subject === "这顿饭" ? "当前没有可直接比较的候选餐食。" : `当前没有可直接比较的${subject}候选。`}`;
   }
@@ -232,11 +365,28 @@ configuredRecommendedMealPriceYuan 和 configuredAcceptableUpperLimitYuan 是所
         ? facts
         : { ...facts, correction: { previousReply, problems: previousProblems, instruction: "针对问题逐项修正，不得重复原错误。" } };
       const copy = await callDeepSeekJson(system, JSON.stringify(modelInput), priceAdviceCopySchema, {
-        timeoutMs: agentCapabilities.model.defaultTimeoutMs,
-        thinking: "enabled",
+        timeoutMs: Math.min(agentCapabilities.model.defaultTimeoutMs, 10_000),
+        thinking: "disabled",
+        retries: 0,
       });
-      const repairedReply = repairPriceAdviceFacts(copy.reply, subject, matchingCandidate, context.recommendedMealPriceYuan);
-      const problems = priceAdviceSemanticProblems(repairedReply, subject, matchingCandidate, allowedMoneyCents);
+      const repairedReply = repairPriceAdviceFacts(
+        copy.reply,
+        subject,
+        matchingCandidate,
+        context.recommendedMealPriceYuan,
+        context.recentAverageYuan,
+        context.hardLimitYuan,
+      );
+      const problems = priceAdviceSemanticProblems(
+        repairedReply,
+        subject,
+        matchingCandidate,
+        allowedMoneyCents,
+        context.remainingBudgetYuan,
+        context.recommendedDailyBudgetYuan,
+        context.recentAverageYuan,
+        context.hardLimitYuan,
+      );
       if (problems.length === 0) {
         return mealAgentChatResponseSchema.parse({
           ...fallback,
@@ -323,6 +473,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(localHistoryResponse(history.data));
     }
     const context = agentContext(store);
+    if (priorHistoryQuery(input) && asksHistoricalChoice(input.message)) {
+      const history = retrieveHistoricalMealPatterns({ queryDate: new Date() }, store);
+      if (!history.success) throw new Error(history.error.message);
+      return NextResponse.json(await historicalChoiceResponse(input, history.data, context));
+    }
     if (isPriceAdviceRequest(input.message)) {
       return NextResponse.json(await priceAdviceResponse(input, context));
     }
